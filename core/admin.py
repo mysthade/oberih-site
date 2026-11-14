@@ -1,6 +1,18 @@
 """Налаштування панелі адміністратора (/admin-panel/) для сайту КЗ «НРЦ «Оберіг»»."""
 from django import forms
 from django.contrib import admin, messages
+from django.db.models import (
+    BooleanField,
+    Case,
+    Count,
+    Exists,
+    OuterRef,
+    Q,
+    TextField,
+    Value,
+    When,
+)
+from django.db.models.functions import Cast
 from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.utils.html import format_html
@@ -8,6 +20,7 @@ from simple_history.admin import SimpleHistoryAdmin
 
 from .models import (
     MAX_PDF_SIZE_MB,
+    PAGE_PLACEHOLDER_PHRASES,
     Block,
     ContactMessage,
     Document,
@@ -251,7 +264,8 @@ class DocumentInline(admin.TabularInline):
     verbose_name_plural = "2. Офіційні документи (PDF) на цій сторінці"
     description = (
         f"Прикріпіть PDF-файли (до {MAX_PDF_SIZE_MB} МБ), які мають відображатися на сторінці. "
-        "Якщо файл ще готується, залиште поле файлу порожнім. Порядок задається числом."
+        "Якщо файл ще не завантажено (поле файлу порожнє), документ показується на сайті "
+        "з підписом «Документ готується до оприлюднення». Порядок задається числом."
     )
 
 
@@ -268,6 +282,52 @@ class PersonInline(admin.TabularInline):
     )
 
 
+def _page_placeholder_annotations() -> dict:
+    """Повертає словник SQL-анотацій для визначення наявності текстів-заглушок макета без N+1 запитів."""
+    block_q = Q()
+    lead_q = Q()
+    for phrase in PAGE_PLACEHOLDER_PHRASES:
+        block_q |= Q(text__icontains=phrase) | Q(data_text__icontains=phrase)
+        lead_q |= Q(lead__icontains=phrase)
+
+    block_subquery = (
+        Block.objects.filter(page=OuterRef("pk"))
+        .annotate(data_text=Cast("data", output_field=TextField()))
+        .filter(block_q)
+    )
+    return {
+        "_has_block_placeholder": Exists(block_subquery),
+        "_has_placeholder": Case(
+            When(lead_q | Q(_has_block_placeholder=True), then=Value(True)),
+            default=Value(False),
+            output_field=BooleanField(),
+        ),
+    }
+
+
+class PageHasPlaceholderFilter(admin.SimpleListFilter):
+    """Фільтр сторінок за наявністю текстів-заглушок із початкового макета."""
+
+    title = "Містить заглушку"
+    parameter_name = "has_placeholder"
+
+    def lookups(self, request, model_admin):
+        return (
+            ("yes", "Є заглушка"),
+            ("no", "Без заглушок"),
+        )
+
+    def queryset(self, request, queryset):
+        val = self.value()
+        if val not in ("yes", "no"):
+            return queryset
+        if not hasattr(queryset.query, "annotations") or "_has_placeholder" not in queryset.query.annotations:
+            queryset = queryset.annotate(**_page_placeholder_annotations())
+        if val == "yes":
+            return queryset.filter(_has_placeholder=True)
+        return queryset.filter(_has_placeholder=False)
+
+
 # --- 1. Сторінки сайту (Page) ---
 @admin.register(Page)
 class PageAdmin(SimpleHistoryAdmin):
@@ -275,14 +335,27 @@ class PageAdmin(SimpleHistoryAdmin):
         "title",
         "section",
         "publication_status",
+        "missing_docs_display",
+        "has_placeholder_display",
         "updated_at",
         "order",
     )
-    list_filter = ("section", "is_published")
+    list_filter = ("section", "is_published", PageHasPlaceholderFilter)
     search_fields = ("title", "lead", "slug")
     list_select_related = ("section",)
     prepopulated_fields = {"slug": ("title",)}
     inlines = [BlockInline, DocumentInline, PersonInline]
+
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        return queryset.annotate(
+            _missing_docs_count=Count(
+                "documents",
+                filter=Q(documents__file="") | Q(documents__file__isnull=True),
+                distinct=True,
+            ),
+            **_page_placeholder_annotations(),
+        )
 
     fieldsets = (
         (
@@ -321,6 +394,24 @@ class PageAdmin(SimpleHistoryAdmin):
         return format_html(
             '<span class="oberih-badge oberih-badge--draft">Чернетка</span>'
         )
+
+    @admin.display(description="Документів без файлу", ordering="_missing_docs_count")
+    def missing_docs_display(self, obj: Page):
+        count = getattr(obj, "_missing_docs_count", 0)
+        if count > 0:
+            return format_html(
+                '<span style="color:#92400e;font-weight:700;">{}</span>',
+                count,
+            )
+        return "—"
+
+    @admin.display(description="Містить заглушку", ordering="_has_placeholder")
+    def has_placeholder_display(self, obj: Page):
+        if getattr(obj, "_has_placeholder", False):
+            return format_html(
+                '<span style="color:#92400e;font-weight:700;">Так</span>'
+            )
+        return "—"
 
     def delete_view(self, request, object_id, extra_context=None):
         extra_context = extra_context or {}
@@ -456,35 +547,69 @@ class PersonAdmin(SimpleHistoryAdmin):
         )
 
 
+class DocumentFileStatusFilter(admin.SimpleListFilter):
+    """Фільтр документів за наявністю прикріпленого PDF-файлу."""
+
+    title = "Наявність файлу"
+    parameter_name = "has_file"
+
+    def lookups(self, request, model_admin):
+        return (
+            ("no", "Без файлу"),
+            ("yes", "Із завантаженим файлом"),
+        )
+
+    def queryset(self, request, queryset):
+        val = self.value()
+        empty_q = Q(file="") | Q(file__isnull=True)
+        if val == "no":
+            return queryset.filter(empty_q)
+        if val == "yes":
+            return queryset.exclude(empty_q)
+        return queryset
+
+
 # --- 6. Документи (Document) ---
 @admin.register(Document)
 class DocumentAdmin(SimpleHistoryAdmin):
     list_display = (
         "title",
         "page",
-        "file_size_display",
+        "file_status_display",
         "show_st30_notice",
         "order",
     )
     list_editable = ("order", "show_st30_notice")
-    list_filter = ("show_st30_notice", "page__section", "page")
+    list_filter = (
+        DocumentFileStatusFilter,
+        "show_st30_notice",
+        "page__section",
+        "page",
+    )
     search_fields = ("title", "page__title")
     list_select_related = ("page", "page__section")
     fields = ("page", "title", "file", "order", "show_st30_notice")
 
-    @admin.display(description="Розмір PDF-файлу")
-    def file_size_display(self, obj: Document):
+    @admin.display(description="Файл")
+    def file_status_display(self, obj: Document):
         if not obj.has_file:
             return format_html(
-                '<span style="color:#92400e;">Файл ще не завантажено</span>'
+                '<span style="color:#92400e;font-weight:600;">✘ Без файлу</span>'
             )
         try:
             size_bytes = obj.file.size
+            if size_bytes < 1024 * 1024:
+                size_str = f"{size_bytes / 1024:.1f} КБ"
+            else:
+                size_str = f"{size_bytes / (1024 * 1024):.2f} МБ"
+            return format_html(
+                '<span style="color:#15803d;font-weight:600;">✔ Завантажено ({})</span>',
+                size_str,
+            )
         except OSError:
-            return "Файл відсутній на диску"
-        if size_bytes < 1024 * 1024:
-            return f"{size_bytes / 1024:.1f} КБ"
-        return f"{size_bytes / (1024 * 1024):.2f} МБ"
+            return format_html(
+                '<span style="color:#15803d;font-weight:600;">✔ Завантажено</span>'
+            )
 
 
 # --- 7. Головна сторінка (HomePage) ---
@@ -573,6 +698,7 @@ class SiteSettingsAdmin(SingletonModelAdmin):
                     "map_url",
                     "footer_text",
                     "schedule_notice",
+                    "privacy_policy_page",
                 ),
             },
         ),

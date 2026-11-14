@@ -242,7 +242,7 @@
           <div class="field"><label for="f-name">Ваше ім'я</label><input id="f-name" name="name" type="text" autocomplete="name" required></div>
           <div class="field"><label for="f-email">Електронна пошта</label><input id="f-email" name="email" type="email" autocomplete="email" required></div>
           <div class="field"><label for="f-msg">Запитання</label><textarea id="f-msg" name="message" required></textarea></div>
-          <label class="check"><input id="f-consent" name="consent" type="checkbox" required>Погоджуюся на обробку персональних даних для відповіді на запитання. Згоду можна відкликати будь-коли.</label>
+          <label class="check"><input id="f-consent" name="consent" type="checkbox" required>{% if site_settings.privacy_policy_url %}<span>Погоджуюся на <a href="{{ site_settings.privacy_policy_url }}" target="_blank" rel="noopener">обробку персональних даних</a> для відповіді на запитання. Згоду можна відкликати будь-коли.</span>{% else %}Погоджуюся на обробку персональних даних для відповіді на запитання. Згоду можна відкликати будь-коли.{% endif %}</label>
           <div><button class="btn btn-primary" type="submit">Надіслати</button></div>
           <p class="form-status" id="form-status" role="status"></p>
         </form>

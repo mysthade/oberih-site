@@ -19,7 +19,9 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.mail.backends.base import BaseEmailBackend
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db import connection
 from django.test import Client, RequestFactory, TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from PIL import Image
 
 from .context_processors import site_context
@@ -1647,6 +1649,248 @@ class Stage8SecurityAndDeployTests(TestCase):
             ):
                 resp = self.client.get("/media/linked_secret.pdf")
                 self.assertEqual(resp.status_code, 404)
+
+
+@override_settings(STORAGES=TEST_STORAGES)
+class Stage11DocumentsPrivacyAndPlaceholdersTests(TestCase):
+    """Тести 11-го кроку: документи без файлу, посилання на політику конфіденційності та пошук заглушок макета в адмінці."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("createcachetable", stdout=StringIO())
+        call_command("import_site_map", stdout=StringIO())
+        call_command("import_home", stdout=StringIO())
+        cls.admin_user = User.objects.create_superuser(
+            username="admin_step11",
+            email="admin11@example.com",
+            password="StrongAdminPass123!",
+        )
+
+    def test_document_without_file_and_with_file_rendering_and_no_dodast_caption(self):
+        """Після import_site_map документи без файлу мають підпис «Документ готується до оприлюднення» без <a> і без <em class="pdf">; документ із файлом має <a> і <em class="pdf">."""
+        # 1. На жодній опублікованій сторінці немає старого підпису документа «PDF · додасть адміністрація»
+        for page in Page.objects.filter(is_published=True).select_related("section"):
+            url = page.get_absolute_url()
+            with self.subTest(url=url):
+                resp = self.client.get(url)
+                self.assertEqual(resp.status_code, 200)
+                html = resp.content.decode("utf-8")
+                self.assertNotIn("PDF · додасть адміністрація", html)
+
+        # 2. Перевірка конкретної сторінки з документом без файлу (/ofitsiina-storinka/statut/)
+        statut_page = Page.objects.get(
+            section__slug="ofitsiina-storinka", slug="statut"
+        )
+        statut_doc = statut_page.documents.first()
+        self.assertIsNotNone(statut_doc)
+        self.assertFalse(statut_doc.has_file)
+
+        resp_no_file = self.client.get("/ofitsiina-storinka/statut/")
+        self.assertEqual(resp_no_file.status_code, 200)
+        html_no_file = resp_no_file.content.decode("utf-8")
+        self.assertIn(
+            '<div class="doc-item">'
+            '<svg class="icon ic" viewBox="0 0 24 24" aria-hidden="true">'
+            '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/></svg>'
+            "<span>Статут<small>Документ готується до оприлюднення</small></span>"
+            "</div>",
+            html_no_file,
+        )
+        self.assertNotIn('<a class="doc-item"', html_no_file)
+        self.assertNotIn('<em class="pdf">PDF</em>', html_no_file)
+        # Примітка про ст. 30 ЗУ «Про освіту» залишається на місці
+        self.assertIn("відповідно до ст. 30 Закону України «Про освіту»", html_no_file)
+
+        # 3. Коли до документа прикріплено PDF-файл, виводиться <a class="doc-item"> з «PDF · завантажити» і <em class="pdf">PDF</em>
+        with tempfile.TemporaryDirectory() as tmp_media:
+            with override_settings(MEDIA_ROOT=Path(tmp_media)):
+                statut_doc.file = SimpleUploadedFile(
+                    "statut.pdf",
+                    b"%PDF-1.4\nReal PDF content",
+                    content_type="application/pdf",
+                )
+                statut_doc.full_clean()
+                statut_doc.save()
+
+                resp_with_file = self.client.get("/ofitsiina-storinka/statut/")
+                self.assertEqual(resp_with_file.status_code, 200)
+                html_with_file = resp_with_file.content.decode("utf-8")
+                self.assertIn('<a class="doc-item" href="/media/documents/', html_with_file)
+                self.assertIn('target="_blank" rel="noopener"', html_with_file)
+                self.assertIn(
+                    "<span>Статут<small>PDF · завантажити</small></span>"
+                    '<em class="pdf">PDF</em></a>',
+                    html_with_file,
+                )
+                self.assertNotIn("Документ готується до оприлюднення", html_with_file)
+
+    def test_privacy_policy_page_link_on_home_and_contacts(self):
+        """Посилання на політику конфіденційності біля #f-consent: коли не вибрано, коли опублікована, коли чернетка і після видалення сторінки."""
+        settings_obj = SiteSettings.objects.get(pk=1)
+        plain_label_tail = (
+            ">Погоджуюся на обробку персональних даних для відповіді на запитання. "
+            "Згоду можна відкликати будь-коли.</label>"
+        )
+
+        # 1. Не вибрано (None) — оригінальна розмітка 1:1 без <span> і без <a>
+        settings_obj.privacy_policy_page = None
+        settings_obj.save()
+        for url in ("/", "/kontakty/"):
+            resp = self.client.get(url)
+            self.assertEqual(resp.status_code, 200)
+            html = resp.content.decode("utf-8")
+            self.assertIn(plain_label_tail, html)
+
+        # 2. Створюємо опубліковану сторінку політики та вибираємо її в SiteSettings
+        ofitsiina_sec = Section.objects.get(slug="ofitsiina-storinka")
+        policy_page = Page.objects.create(
+            section=ofitsiina_sec,
+            slug="polityka-konfidentsiinosti",
+            title="Політика конфіденційності",
+            lead="Порядок обробки персональних даних.",
+            is_published=True,
+            order=99,
+        )
+        settings_obj.privacy_policy_page = policy_page
+        settings_obj.save()
+
+        expected_linked_tail = (
+            '><span>Погоджуюся на <a href="/ofitsiina-storinka/polityka-konfidentsiinosti/" '
+            'target="_blank" rel="noopener">обробку персональних даних</a> '
+            "для відповіді на запитання. Згоду можна відкликати будь-коли.</span></label>"
+        )
+        for url in ("/", "/kontakty/"):
+            resp = self.client.get(url)
+            self.assertEqual(resp.status_code, 200)
+            html = resp.content.decode("utf-8")
+            self.assertIn(expected_linked_tail, html)
+
+        # 3. Якщо сторінка політики стає чернеткою (is_published=False) — посилання зникає, розмітка 1:1
+        policy_page.is_published = False
+        policy_page.save(update_fields=["is_published"])
+        for url in ("/", "/kontakty/"):
+            resp = self.client.get(url)
+            self.assertEqual(resp.status_code, 200)
+            html = resp.content.decode("utf-8")
+            self.assertIn(plain_label_tail, html)
+            self.assertNotIn("/ofitsiina-storinka/polityka-konfidentsiinosti/", html)
+
+        # 4. При видаленні сторінки політики SiteSettings не ламається (on_delete=SET_NULL)
+        policy_page.is_published = True
+        policy_page.save(update_fields=["is_published"])
+        policy_page.delete()
+
+        settings_obj.refresh_from_db()
+        self.assertIsNone(settings_obj.privacy_policy_page)
+        self.assertEqual(settings_obj.privacy_policy_url, "")
+        for url in ("/", "/kontakty/"):
+            resp = self.client.get(url)
+            self.assertEqual(resp.status_code, 200)
+            html = resp.content.decode("utf-8")
+            self.assertIn(plain_label_tail, html)
+
+    def test_admin_columns_filters_22_placeholders_napryklad_and_zero_n_plus_one(self):
+        """Колонки і фільтри PageAdmin та DocumentAdmin: знаходять рівно 22 сторінки з заглушками, не спрацьовують на «наприклад» і не роблять N+1 запитів."""
+        self.client.force_login(self.admin_user)
+
+        # 1. Рівно 22 сторінки з 46 після import_site_map позначаються як такі, що містять заглушку
+        resp_ph_yes = self.client.get("/admin-panel/core/page/?has_placeholder=yes")
+        self.assertEqual(resp_ph_yes.status_code, 200)
+        changelist_yes = resp_ph_yes.context["cl"]
+        self.assertEqual(changelist_yes.result_count, 22)
+
+        resp_ph_no = self.client.get("/admin-panel/core/page/?has_placeholder=no")
+        self.assertEqual(resp_ph_no.status_code, 200)
+        changelist_no = resp_ph_no.context["cl"]
+        self.assertEqual(changelist_no.result_count, 46 - 22)
+
+        # 2. Сторінка, що містить звичайне слово «наприклад», «макетування» або «тимчасово», НЕ позначається як заглушка
+        pro_nas = Section.objects.get(slug="pro-nas")
+        clean_page = Page.objects.create(
+            section=pro_nas,
+            slug="zvychna-storinka-z-napryklad",
+            title="Звичайна сторінка про навчання",
+            lead="Тут описані матеріали закладу, наприклад розклад консультацій і тимчасово змінені години.",
+            is_published=True,
+            order=90,
+        )
+        Block.objects.create(
+            page=clean_page,
+            block_type=Block.BlockType.PARAGRAPH,
+            order=1,
+            text="На заняттях діти вчаться, наприклад, малювати, конструювати та займатися макетуванням.",
+        )
+        Block.objects.create(
+            page=clean_page,
+            block_type=Block.BlockType.LIST,
+            order=2,
+            data=["Перша вправа, наприклад дихальна гімнастика", "Друга вправа для моторики"],
+        )
+
+        resp_check_clean = self.client.get("/admin-panel/core/page/?has_placeholder=yes")
+        self.assertEqual(resp_check_clean.status_code, 200)
+        ph_yes_ids = set(
+            resp_check_clean.context["cl"].queryset.values_list("pk", flat=True)
+        )
+        self.assertNotIn(
+            clean_page.pk,
+            ph_yes_ids,
+            "Сторінка зі словом «наприклад» не повинна вважатися заглушкою макета.",
+        )
+        self.assertEqual(len(ph_yes_ids), 22)
+
+        # 3. Перевірка відсутності N+1 запитів у PageAdmin changelist
+        with CaptureQueriesContext(connection) as ctx_before:
+            resp_list_1 = self.client.get("/admin-panel/core/page/")
+            self.assertEqual(resp_list_1.status_code, 200)
+        queries_before = len(ctx_before)
+
+        # Додаємо ще 5 сторінок із блоками та документами без файлів
+        for idx in range(1, 6):
+            extra_page = Page.objects.create(
+                section=pro_nas,
+                slug=f"extra-perf-page-{idx}",
+                title=f"Додаткова сторінка {idx}",
+                lead="Короткий опис.",
+                is_published=True,
+                order=100 + idx,
+            )
+            Block.objects.create(
+                page=extra_page,
+                block_type=Block.BlockType.PARAGRAPH,
+                order=1,
+                text="Звичайний текст блоку.",
+            )
+            Document.objects.create(
+                page=extra_page,
+                title=f"Документ без файлу {idx}",
+                order=1,
+            )
+
+        with CaptureQueriesContext(connection) as ctx_after:
+            resp_list_2 = self.client.get("/admin-panel/core/page/")
+            self.assertEqual(resp_list_2.status_code, 200)
+        queries_after = len(ctx_after)
+
+        self.assertEqual(
+            queries_before,
+            queries_after,
+            f"Кількість SQL-запитів у списку сторінок зросла з {queries_before} до {queries_after} (ознака N+1).",
+        )
+
+        # 4. Перевірка DocumentAdmin та фільтра «Наявність файлу» (has_file=no / has_file=yes)
+        resp_doc_all = self.client.get("/admin-panel/core/document/")
+        self.assertEqual(resp_doc_all.status_code, 200)
+        self.assertIn("✘ Без файлу", resp_doc_all.content.decode("utf-8"))
+
+        resp_doc_no = self.client.get("/admin-panel/core/document/?has_file=no")
+        self.assertEqual(resp_doc_no.status_code, 200)
+        self.assertEqual(resp_doc_no.context["cl"].result_count, 45 + 5)
+
+        resp_doc_yes = self.client.get("/admin-panel/core/document/?has_file=yes")
+        self.assertEqual(resp_doc_yes.status_code, 200)
+        self.assertEqual(resp_doc_yes.context["cl"].result_count, 0)
+
 
 
 

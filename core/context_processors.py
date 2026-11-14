@@ -15,6 +15,7 @@ def site_context(request) -> dict:
     if not hasattr(request, "_cached_site_context"):
         try:
             with transaction.atomic():
+                # SiteSettings.objects автоматично виконує select_related("privacy_policy_page", "privacy_policy_page__section")
                 site_settings = SiteSettings.objects.first() or SiteSettings()
                 published_pages_prefetch = Prefetch(
                     "pages",

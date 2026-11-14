@@ -26,6 +26,21 @@ MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024
 MAX_IMAGE_DIMENSIONS = (1600, 1600)
 ALLOWED_IMAGE_EXTENSIONS = ["jpg", "jpeg", "png"]
 
+# --- Перелік конкретних фраз-заглушок макета для перевірки сторінок у адмінці ---
+PAGE_PLACEHOLDER_PHRASES = (
+    "надасть адміністрація",
+    "додасть адміністрація",
+    "(приклад)",
+    "структура-приклад",
+    "перелік посад — приклад",
+    "текст місії закладу",
+    "текст візії закладу",
+    "цінність 1",
+    "документ 1",
+    "гурток 1",
+    "примітка до макета",
+)
+
 
 class AccentColor(models.TextChoices):
     """Палітра акцентних кольорів макета сайту."""
@@ -194,6 +209,20 @@ def compress_image_field(image_field) -> None:
 
 
 # --- 1. Налаштування сайту (Singleton) ---
+class SiteSettingsManager(models.Manager):
+    """Менеджер налаштувань сайту з підвантаженням пов'язаної сторінки політики конфіденційності."""
+
+    def first(self):
+        return (
+            self.get_queryset()
+            .select_related(
+                "privacy_policy_page",
+                "privacy_policy_page__section",
+            )
+            .first()
+        )
+
+
 class SiteSettings(models.Model):
     """Єдиний запис із наскрізними контактами та реквізитами закладу."""
 
@@ -248,7 +277,21 @@ class SiteSettings(models.Model):
             "(наприклад, графік роботи та прийому громадян). Якщо залишити порожнім — не показується."
         ),
     )
+    privacy_policy_page = models.ForeignKey(
+        "Page",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="+",
+        verbose_name="Сторінка політики конфіденційності",
+        help_text=(
+            "Необов'язкова сторінка з політикою конфіденційності або порядком обробки персональних даних. "
+            "Якщо вибрати опубліковану сторінку, біля галочки згоди у формі «Поставити запитання» "
+            "з'явиться посилання на неї."
+        ),
+    )
 
+    objects = SiteSettingsManager()
     history = HistoricalRecords(verbose_name="Історія змін")
 
     class Meta:
@@ -257,6 +300,14 @@ class SiteSettings(models.Model):
 
     def __str__(self) -> str:
         return "Загальні налаштування сайту НРЦ «Оберіг»"
+
+    @property
+    def privacy_policy_url(self) -> str:
+        """Повертає URL сторінки політики конфіденційності, лише якщо її вибрано та опубліковано."""
+        page = self.privacy_policy_page if self.privacy_policy_page_id else None
+        if page and page.is_published:
+            return page.get_absolute_url()
+        return ""
 
     @property
     def phone_tel(self) -> str:

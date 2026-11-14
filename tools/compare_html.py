@@ -389,6 +389,14 @@ def compare_page(client: Client, rel_html_path: str) -> None:
             "  • <main> (#ask-form): у форму додано method=\"post\" action=\"/kontakty/\", "
             "прихований csrfmiddlewaretoken, приховане honeypot-поле website (hidden) та name=\"consent\" у чекбокс згоди."
         )
+    elif norm_path in (
+        "pro-nas/struktura-ta-orhany-upravlinnia.html",
+        "ofitsiina-storinka/statut.html",
+    ):
+        print(
+            "  • <main> (.doc-item без файлу): демо-підпис «PDF · додасть адміністрація» та бейдж <em class=\"pdf\">PDF</em> "
+            "замінено на «Документ готується до оприлюднення» без бейджа PDF."
+        )
     elif norm_path == "pro-nas/administratsiia.html":
         print("  • <main>: картки працівників мають consent_given=False до отримання письмових згод.")
     elif norm_path == "novyny/index.html":
