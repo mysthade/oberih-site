@@ -15,8 +15,10 @@ from django.db.models import (
 )
 from django.db.models.functions import Cast
 from django.http import HttpResponseRedirect
-from django.urls import reverse
+from django.shortcuts import render
+from django.urls import path, reverse
 from django.utils.html import format_html
+from django.views.decorators.http import require_GET
 from simple_history.admin import SimpleHistoryAdmin
 
 from .models import (
@@ -66,6 +68,340 @@ def _ordered_get_app_list(request, app_label=None):
 
 
 admin.site.get_app_list = _ordered_get_app_list
+
+# --- Загальний пошук по вмісту сайту в керуванні сайтом ---
+ADMIN_SEARCH_MIN_LENGTH = 2
+ADMIN_SEARCH_LIMIT_PER_TYPE = 20
+
+
+def _extract_block_data_strings(data) -> list[str]:
+    """Рекурсивно витягує лише текстові значення з поля Block.data, ігноруючи ключі JSON-об'єктів."""
+    if isinstance(data, str):
+        return [data]
+    if isinstance(data, list):
+        texts: list[str] = []
+        for item in data:
+            texts.extend(_extract_block_data_strings(item))
+        return texts
+    if isinstance(data, dict):
+        texts = []
+        for val in data.values():
+            texts.extend(_extract_block_data_strings(val))
+        return texts
+    return []
+
+
+def _user_can_view_or_change(request, model) -> bool:
+    """Перевіряє, чи має поточний користувач право перегляду або зміни записів моделі."""
+    model_admin = admin.site._registry.get(model)
+    if model_admin is None:
+        return False
+    return model_admin.has_view_or_change_permission(request)
+
+
+@require_GET
+def admin_search_view(request):
+    """Сторінка загального пошуку по вмісту сайту в керуванні сайтом."""
+    query = (request.GET.get("q") or "").strip()
+    too_short = 0 < len(query) < ADMIN_SEARCH_MIN_LENGTH
+    groups = []
+    total_found = 0
+
+    if len(query) >= ADMIN_SEARCH_MIN_LENGTH:
+        q_folded = query.casefold()
+
+        # 1. Сторінки сайту (Page) + текстові значення блоків (Block)
+        if _user_can_view_or_change(request, Page):
+            candidate_data_blocks = (
+                Block.objects.exclude(data__isnull=True)
+                .annotate(data_text=Cast("data", output_field=TextField()))
+                .filter(data_text__icontains=query)
+                .values_list("page_id", "data")
+            )
+            matching_data_page_ids = {
+                page_id
+                for page_id, block_data in candidate_data_blocks
+                if any(
+                    q_folded in val.casefold()
+                    for val in _extract_block_data_strings(block_data)
+                )
+            }
+            text_block_subquery = Block.objects.filter(
+                page=OuterRef("pk"),
+                text__icontains=query,
+            )
+            page_q = (
+                Q(title__icontains=query)
+                | Q(lead__icontains=query)
+                | Q(slug__icontains=query)
+                | Q(meta_description__icontains=query)
+                | Exists(text_block_subquery)
+            )
+            if matching_data_page_ids:
+                page_q |= Q(pk__in=matching_data_page_ids)
+
+            pages = list(
+                Page.objects.select_related("section")
+                .filter(page_q)
+                .order_by("section__order", "order", "id")[
+                    :ADMIN_SEARCH_LIMIT_PER_TYPE
+                ]
+            )
+            if pages:
+                items = [
+                    {
+                        "title": p.title,
+                        "section_or_type": f"Сторінка · {p.section.title}",
+                        "status_text": (
+                            "Опубліковано" if p.is_published else "Чернетка"
+                        ),
+                        "is_published": bool(p.is_published),
+                        "edit_url": reverse(
+                            "admin:core_page_change", args=[p.pk]
+                        ),
+                    }
+                    for p in pages
+                ]
+                groups.append(
+                    {
+                        "label": "Сторінки сайту",
+                        "count": len(items),
+                        "items": items,
+                    }
+                )
+                total_found += len(items)
+
+        # 2. Розділи сайту (Section)
+        if _user_can_view_or_change(request, Section):
+            sections = list(
+                Section.objects.filter(
+                    Q(title__icontains=query)
+                    | Q(lead__icontains=query)
+                    | Q(slug__icontains=query)
+                ).order_by("order", "id")[:ADMIN_SEARCH_LIMIT_PER_TYPE]
+            )
+            if sections:
+                items = [
+                    {
+                        "title": s.title,
+                        "section_or_type": f"Розділ меню (/{s.slug}/)",
+                        "status_text": (
+                            "Опубліковано (в меню)"
+                            if s.show_in_menu
+                            else "Приховано з меню"
+                        ),
+                        "is_published": bool(s.show_in_menu),
+                        "edit_url": reverse(
+                            "admin:core_section_change", args=[s.pk]
+                        ),
+                    }
+                    for s in sections
+                ]
+                groups.append(
+                    {
+                        "label": "Розділи сайту",
+                        "count": len(items),
+                        "items": items,
+                    }
+                )
+                total_found += len(items)
+
+        # 3. Новини (NewsItem)
+        if _user_can_view_or_change(request, NewsItem):
+            news_list = list(
+                NewsItem.objects.filter(
+                    Q(title__icontains=query)
+                    | Q(summary__icontains=query)
+                    | Q(body__icontains=query)
+                    | Q(category__icontains=query)
+                    | Q(slug__icontains=query)
+                ).order_by("-published_date", "-id")[
+                    :ADMIN_SEARCH_LIMIT_PER_TYPE
+                ]
+            )
+            if news_list:
+                items = [
+                    {
+                        "title": n.title,
+                        "section_or_type": (
+                            f"Новина · {n.category} ({n.published_date:%d.%m.%Y})"
+                        ),
+                        "status_text": (
+                            "Опубліковано" if n.is_published else "Чернетка"
+                        ),
+                        "is_published": bool(n.is_published),
+                        "edit_url": reverse(
+                            "admin:core_newsitem_change", args=[n.pk]
+                        ),
+                    }
+                    for n in news_list
+                ]
+                groups.append(
+                    {
+                        "label": "Новини",
+                        "count": len(items),
+                        "items": items,
+                    }
+                )
+                total_found += len(items)
+
+        # 4. Документи (Document)
+        if _user_can_view_or_change(request, Document):
+            docs = list(
+                Document.objects.select_related("page", "page__section")
+                .filter(
+                    Q(title__icontains=query) | Q(page__title__icontains=query)
+                )
+                .order_by("page__section__order", "page__order", "order", "id")[
+                    :ADMIN_SEARCH_LIMIT_PER_TYPE
+                ]
+            )
+            if docs:
+                items = []
+                for d in docs:
+                    if not d.page.is_published:
+                        doc_status = "Сторінка в чернетці"
+                        doc_pub = False
+                    elif d.has_file:
+                        doc_status = "Опубліковано (PDF завантажено)"
+                        doc_pub = True
+                    else:
+                        doc_status = "Без файлу (готується)"
+                        doc_pub = False
+                    items.append(
+                        {
+                            "title": d.title,
+                            "section_or_type": (
+                                f"Документ · {d.page.section.title} → {d.page.title}"
+                            ),
+                            "status_text": doc_status,
+                            "is_published": doc_pub,
+                            "edit_url": reverse(
+                                "admin:core_document_change", args=[d.pk]
+                            ),
+                        }
+                    )
+                groups.append(
+                    {
+                        "label": "Документи",
+                        "count": len(items),
+                        "items": items,
+                    }
+                )
+                total_found += len(items)
+
+        # 5. Працівники (Person)
+        if _user_can_view_or_change(request, Person):
+            people = list(
+                Person.objects.select_related("page", "page__section")
+                .filter(
+                    Q(full_name__icontains=query)
+                    | Q(position__icontains=query)
+                    | Q(page__title__icontains=query)
+                )
+                .order_by("page__section__order", "page__order", "order", "id")[
+                    :ADMIN_SEARCH_LIMIT_PER_TYPE
+                ]
+            )
+            if people:
+                items = []
+                for p in people:
+                    name_label = (
+                        f"{p.full_name} — {p.position}"
+                        if p.full_name
+                        else f"ПІБ не вказано — {p.position}"
+                    )
+                    if p.consent_given and p.page.is_published:
+                        p_status = "Опубліковано (є згода)"
+                        p_pub = True
+                    elif p.consent_given:
+                        p_status = "Сторінка в чернетці"
+                        p_pub = False
+                    else:
+                        p_status = "Приховано (немає згоди)"
+                        p_pub = False
+                    items.append(
+                        {
+                            "title": name_label,
+                            "section_or_type": (
+                                f"Працівник · {p.page.section.title} → {p.page.title}"
+                            ),
+                            "status_text": p_status,
+                            "is_published": p_pub,
+                            "edit_url": reverse(
+                                "admin:core_person_change", args=[p.pk]
+                            ),
+                        }
+                    )
+                groups.append(
+                    {
+                        "label": "Працівники",
+                        "count": len(items),
+                        "items": items,
+                    }
+                )
+                total_found += len(items)
+
+        # 6. Спонсори (Sponsor)
+        if _user_can_view_or_change(request, Sponsor):
+            sponsors = list(
+                Sponsor.objects.filter(
+                    Q(name__icontains=query) | Q(url__icontains=query)
+                ).order_by("order", "id")[:ADMIN_SEARCH_LIMIT_PER_TYPE]
+            )
+            if sponsors:
+                items = [
+                    {
+                        "title": sp.name,
+                        "section_or_type": "Спонсор · Головна сторінка",
+                        "status_text": (
+                            "Опубліковано (з логотипом)"
+                            if sp.has_logo
+                            else "Опубліковано (без логотипа)"
+                        ),
+                        "is_published": True,
+                        "edit_url": reverse(
+                            "admin:core_sponsor_change", args=[sp.pk]
+                        ),
+                    }
+                    for sp in sponsors
+                ]
+                groups.append(
+                    {
+                        "label": "Спонсори",
+                        "count": len(items),
+                        "items": items,
+                    }
+                )
+                total_found += len(items)
+
+    context = {
+        **admin.site.each_context(request),
+        "title": "Пошук по вмісту сайту",
+        "query": query,
+        "too_short": too_short,
+        "min_length": ADMIN_SEARCH_MIN_LENGTH,
+        "limit_per_type": ADMIN_SEARCH_LIMIT_PER_TYPE,
+        "groups": groups,
+        "total_found": total_found,
+    }
+    return render(request, "admin/search_results.html", context)
+
+
+_orig_get_urls = admin.site.get_urls
+
+
+def _get_urls_with_search():
+    return [
+        path(
+            "search/",
+            admin.site.admin_view(admin_search_view),
+            name="search",
+        ),
+    ] + _orig_get_urls()
+
+
+admin.site.get_urls = _get_urls_with_search
 
 
 # --- Форма для блоку вмісту (без показу JSON редактору) ---

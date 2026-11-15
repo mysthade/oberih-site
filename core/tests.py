@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 
 from django.conf import settings
 from django.contrib import admin
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Permission, User
 from django.core import mail
 from django.core.cache import cache
 from django.core.exceptions import ImproperlyConfigured, ValidationError
@@ -23,6 +23,7 @@ from django.core.management.base import CommandError
 from django.db import connection
 from django.test import Client, RequestFactory, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
+from django.urls import reverse
 from PIL import Image
 
 from config.admin_url import FORBIDDEN_ADMIN_URL_WORDS, validate_admin_url
@@ -1981,6 +1982,214 @@ class Stage11DocumentsPrivacyAndPlaceholdersTests(TestCase):
         resp_doc_yes = self.client.get(admin_path("core/document/?has_file=yes"))
         self.assertEqual(resp_doc_yes.status_code, 200)
         self.assertEqual(resp_doc_yes.context["cl"].result_count, 0)
+
+    def test_admin_global_search_access_queries_permissions_and_json_keys(self):
+        """Загальний пошук у керуванні сайтом: доступ лише is_staff, пошук за всіма типами та блоками, ігнорування ключів JSON, права доступу й валідні посилання."""
+        search_url = reverse("admin:search")
+        self.assertEqual(search_url, admin_path("search/"))
+
+        # 1. Анонімний користувач перенаправляється на вхід і не бачить результатів
+        resp_anon = self.client.get(search_url, {"q": "Статут"})
+        self.assertEqual(resp_anon.status_code, 302)
+        self.assertIn(admin_path("login/"), resp_anon["Location"])
+
+        # Користувач без is_staff також перенаправляється на вхід
+        regular_user = User.objects.create_user(
+            username="regular_not_staff",
+            password="RegularUserPass123!",
+            is_staff=False,
+        )
+        self.client.force_login(regular_user)
+        resp_non_staff = self.client.get(search_url, {"q": "Статут"})
+        self.assertEqual(resp_non_staff.status_code, 302)
+        self.assertIn(admin_path("login/"), resp_non_staff["Location"])
+
+        # 2. Авторизуємо редактора (superuser/staff) і перевіряємо форму пошуку на головній керування сайтом
+        self.client.force_login(self.admin_user)
+        resp_index = self.client.get(reverse("admin:index"))
+        self.assertEqual(resp_index.status_code, 200)
+        index_html = resp_index.content.decode("utf-8")
+        self.assertIn(f'action="{search_url}"', index_html)
+        self.assertIn('name="q"', index_html)
+
+        # Лише GET дозволено (POST повертає 405)
+        resp_post = self.client.post(search_url, {"q": "Статут"})
+        self.assertEqual(resp_post.status_code, 405)
+
+        # 3. Порожній та надто короткий запит (1 символ) обробляються без помилок (200 OK)
+        resp_empty = self.client.get(search_url, {"q": "   "})
+        self.assertEqual(resp_empty.status_code, 200)
+        self.assertEqual(resp_empty.context["total_found"], 0)
+
+        resp_short = self.client.get(search_url, {"q": "а"})
+        self.assertEqual(resp_short.status_code, 200)
+        self.assertTrue(resp_short.context["too_short"])
+        self.assertEqual(resp_short.context["total_found"], 0)
+        self.assertIn(
+            "Запит занадто короткий", resp_short.content.decode("utf-8")
+        )
+
+        # 4. Створюємо тестові дані для перевірки збігів за сторінками, блоками, новинами, документами, працівниками та спонсорами
+        section = Section.objects.get(slug="pro-nas")
+        target_page = Page.objects.create(
+            section=section,
+            slug="storinka-dlia-poshuku",
+            title="Сторінка інклюзивного розвитку",
+            lead="Опис унікального напряму.",
+            is_published=True,
+            order=95,
+        )
+        Block.objects.create(
+            page=target_page,
+            block_type=Block.BlockType.PARAGRAPH,
+            order=1,
+            text="УнікальнийАбзацТекстуБлоку для перевірки пошуку.",
+        )
+        # Блок із JSON-об'єктом, де є ключ "items", та блок таблиці з ключами "caption", "columns", "rows"
+        Block.objects.create(
+            page=target_page,
+            block_type=Block.BlockType.LIST,
+            order=2,
+            data={"items": ["СенсорнаКімнатаЗначенняСписку"]},
+        )
+        Block.objects.create(
+            page=target_page,
+            block_type=Block.BlockType.TABLE,
+            order=3,
+            data={
+                "caption": "ТаблицяКорекційнихЗанять",
+                "columns": ["ДеньТижняКолонка"],
+                "rows": [["ПонеділокРядокТаблиці"]],
+            },
+        )
+        target_doc = Document.objects.create(
+            page=target_page,
+            title="Положення про мультидисциплінарну команду",
+            order=1,
+        )
+        target_news = NewsItem.objects.create(
+            title="Відкриття оновленого кабінету реабілітації",
+            slug="vidkryttia-kabinetu-reabilitatsii",
+            category="Події",
+            accent_color="teal",
+            published_date=date(2026, 11, 10),
+            summary="Короткий анонс події.",
+            body="Детальний опис події для пошуку.",
+            is_published=True,
+        )
+        target_person = Person.objects.create(
+            page=target_page,
+            position="Вчитель-реабілітолог",
+            full_name="Коваленко Олена Василівна",
+            consent_given=True,
+            order=1,
+        )
+        target_sponsor = Sponsor.objects.create(
+            name="Благодійний фонд Промінь Надії",
+            url="https://promin-example.org",
+            order=1,
+        )
+
+        # Перевірка знаходження сторінки за заголовком, за Block.text і за значеннями Block.data (нечутливо до регістру)
+        for page_query in (
+            "інклюзивного розвитку",
+            "унікальнийабзацтекстублоку",
+            "сенсорнакімнатазначеннясписку",
+            "таблицякорекційнихзанять",
+            "понеділокрядоктаблиці",
+        ):
+            with self.subTest(page_query=page_query):
+                resp_p = self.client.get(search_url, {"q": page_query})
+                self.assertEqual(resp_p.status_code, 200)
+                html_p = resp_p.content.decode("utf-8")
+                page_edit_url = reverse(
+                    "admin:core_page_change", args=[target_page.pk]
+                )
+                self.assertIn("Сторінка інклюзивного розвитку", html_p)
+                self.assertIn(page_edit_url, html_p)
+                self.assertEqual(self.client.get(page_edit_url).status_code, 200)
+
+        # Перевірка: слово, яке є лише ключем у JSON (наприклад, «items», «caption», «columns», «rows»), нічого не знаходить
+        for json_key_only in ("items", "caption", "columns", "rows"):
+            with self.subTest(json_key_only=json_key_only):
+                resp_key = self.client.get(search_url, {"q": json_key_only})
+                self.assertEqual(resp_key.status_code, 200)
+                self.assertEqual(
+                    resp_key.context["total_found"],
+                    0,
+                    f"Ключ JSON «{json_key_only}» не повинен давати збігів у пошуку.",
+                )
+                self.assertIn(
+                    "Нічого не знайдено", resp_key.content.decode("utf-8")
+                )
+
+        # Перевірка знаходження новини, документа, розділу, працівника та спонсора і перевірка їхніх посилань редагування
+        expected_matches = [
+            (
+                "кабінету реабілітації",
+                "Відкриття оновленого кабінету реабілітації",
+                reverse("admin:core_newsitem_change", args=[target_news.pk]),
+            ),
+            (
+                "мультидисциплінарну команду",
+                "Положення про мультидисциплінарну команду",
+                reverse("admin:core_document_change", args=[target_doc.pk]),
+            ),
+            (
+                "Про нас",
+                "Про нас",
+                reverse("admin:core_section_change", args=[section.pk]),
+            ),
+            (
+                "Коваленко Олена",
+                "Коваленко Олена Василівна",
+                reverse("admin:core_person_change", args=[target_person.pk]),
+            ),
+            (
+                "Промінь Надії",
+                "Благодійний фонд Промінь Надії",
+                reverse("admin:core_sponsor_change", args=[target_sponsor.pk]),
+            ),
+        ]
+        for q_str, expected_title, expected_edit_url in expected_matches:
+            with self.subTest(q_str=q_str):
+                resp_match = self.client.get(search_url, {"q": q_str})
+                self.assertEqual(resp_match.status_code, 200)
+                match_html = resp_match.content.decode("utf-8")
+                self.assertIn(expected_title, match_html)
+                self.assertIn(expected_edit_url, match_html)
+                resp_edit = self.client.get(expected_edit_url)
+                self.assertEqual(resp_edit.status_code, 200)
+
+        # 5. Перевірка прав доступу: staff-користувач із правом лише на перегляд NewsItem бачить тільки новини
+        news_only_staff = User.objects.create_user(
+            username="news_editor_only",
+            password="NewsEditorPass123!",
+            is_staff=True,
+        )
+        view_news_perm = Permission.objects.get(
+            content_type__app_label="core", codename="view_newsitem"
+        )
+        news_only_staff.user_permissions.add(view_news_perm)
+        self.client.force_login(news_only_staff)
+
+        # Запит за словом, яке є і в новині, і на сторінці («реабілітац»)
+        resp_perm = self.client.get(search_url, {"q": "реабілітац"})
+        self.assertEqual(resp_perm.status_code, 200)
+        group_labels = [g["label"] for g in resp_perm.context["groups"]]
+        self.assertEqual(group_labels, ["Новини"])
+
+        # 6. Запит без збігів та XSS-екранування
+        resp_none = self.client.get(
+            search_url, {"q": "<script>alert(1)</script>"}
+        )
+        self.assertEqual(resp_none.status_code, 200)
+        none_html = resp_none.content.decode("utf-8")
+        self.assertIn("Нічого не знайдено", none_html)
+        self.assertIn("Що варто спробувати", none_html)
+        self.assertNotIn("<script>alert(1)</script>", none_html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", none_html)
+
 
 
 

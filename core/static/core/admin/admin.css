@@ -47,3 +47,45 @@
     display: none !important;
 }
 
+.oberih-admin-search {
+    margin-bottom: 20px;
+    padding: 12px 14px;
+    background: var(--darkened-bg, #f8fafc);
+    border: 1px solid var(--hairline-color, #e2e8f0);
+    border-radius: 4px;
+}
+
+.oberih-admin-search__label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.oberih-admin-search__controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.oberih-admin-search__input {
+    flex: 1 1 auto;
+    padding: 6px 10px;
+}
+
+.oberih-admin-search__btn {
+    padding: 7px 16px;
+}
+
+.oberih-search-summary {
+    margin: 0 0 14px;
+}
+
+.oberih-search-group table {
+    width: 100%;
+}
+
+.oberih-search-empty {
+    padding: 12px 14px;
+}
+
+

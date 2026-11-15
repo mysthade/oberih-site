@@ -1,0 +1,25 @@
+{% extends "admin/index.html" %}
+{% load static %}
+
+{% block extrastyle %}{{ block.super }}<link rel="stylesheet" href="{% static "core/admin/admin.css" %}">{% endblock %}
+
+{% block content %}
+<div class="oberih-admin-search">
+  <form method="get" action="{% url 'admin:search' %}" class="oberih-admin-search__form" role="search">
+    <label for="oberih-admin-search-input" class="oberih-admin-search__label">Пошук по вмісту сайту:</label>
+    <div class="oberih-admin-search__controls">
+      <input
+        type="search"
+        id="oberih-admin-search-input"
+        name="q"
+        value=""
+        placeholder="Сторінки, блоки тексту, новини, документи, працівники, спонсори…"
+        class="oberih-admin-search__input"
+      >
+      <button type="submit" class="button oberih-admin-search__btn">Знайти</button>
+    </div>
+  </form>
+</div>
+{{ block.super }}
+{% endblock %}
+

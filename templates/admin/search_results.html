@@ -1,0 +1,89 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block extrastyle %}{{ block.super }}<link rel="stylesheet" href="{% static "core/admin/admin.css" %}">{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Початок</a>
+  &rsaquo; Пошук по вмісту сайту
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  <div class="oberih-admin-search">
+    <form method="get" action="{% url 'admin:search' %}" class="oberih-admin-search__form" role="search">
+      <label for="oberih-admin-search-input" class="oberih-admin-search__label">Пошуковий запит:</label>
+      <div class="oberih-admin-search__controls">
+        <input
+          type="search"
+          id="oberih-admin-search-input"
+          name="q"
+          value="{{ query }}"
+          placeholder="Сторінки, блоки тексту, новини, документи, працівники, спонсори…"
+          class="oberih-admin-search__input"
+          autofocus
+        >
+        <button type="submit" class="button oberih-admin-search__btn">Знайти</button>
+      </div>
+    </form>
+  </div>
+
+  {% if not query %}
+    <div class="module oberih-search-empty">
+      <p>Введіть слово або фразу (щонайменше {{ min_length }} символи), щоб знайти сторінки, текстові блоки, розділи, новини, документи, працівників або спонсорів.</p>
+    </div>
+  {% elif too_short %}
+    <div class="module oberih-search-empty">
+      <p><strong>Запит занадто короткий.</strong> Введіть щонайменше {{ min_length }} символи для пошуку.</p>
+    </div>
+  {% elif groups %}
+    <p class="oberih-search-summary">
+      За запитом «<strong>{{ query }}</strong>» знайдено збігів: <strong>{{ total_found }}</strong> (показано до {{ limit_per_type }} на кожен тип).
+    </p>
+    {% for group in groups %}
+      <div class="module oberih-search-group">
+        <table>
+          <caption>{{ group.label }} ({{ group.count }})</caption>
+          <thead>
+            <tr>
+              <th scope="col">Назва</th>
+              <th scope="col">Розділ / тип</th>
+              <th scope="col">Статус публікації</th>
+              <th scope="col">Дія</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in group.items %}
+              <tr>
+                <th scope="row">
+                  <a href="{{ item.edit_url }}">{{ item.title }}</a>
+                </th>
+                <td>{{ item.section_or_type }}</td>
+                <td>
+                  {% if item.is_published %}
+                    <span class="oberih-badge oberih-badge--published">{{ item.status_text }}</span>
+                  {% else %}
+                    <span class="oberih-badge oberih-badge--draft">{{ item.status_text }}</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <a href="{{ item.edit_url }}" class="changelink">Редагувати</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endfor %}
+  {% else %}
+    <div class="module oberih-search-empty">
+      <h2>Нічого не знайдено</h2>
+      <p>За запитом «<strong>{{ query }}</strong>» не знайдено жодного запису.</p>
+      <p>Що варто спробувати: перевірте правильність написання слів, введіть коротшу частину слова (корінь без закінчення) або спробуйте інше ключове слово.</p>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}
+
