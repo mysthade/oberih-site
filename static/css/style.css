@@ -608,3 +608,7 @@ html.preload-out body::after{animation:pl-spin 1.4s linear infinite,pl-out-logo 
 /* Додано для Django: відступ під формою, коли немає плашки графіка */
 .page-contacts .contact:last-child{padding-bottom:4.5rem}
 
+/* Додано для Django: підвал притиснутий до низу на коротких сторінках */
+body{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
+.site-footer{margin-top:auto}
+
