@@ -13,6 +13,7 @@ ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="127.0.0.1,localhost", cast=Csv(
 CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="", cast=Csv())
 SITE_URL = config("SITE_URL", default="").strip().rstrip("/")
 ADMIN_URL = validate_admin_url(config("ADMIN_URL", default=""))
+ADMIN_SITE_NAME = config("ADMIN_SITE_NAME", default="Керування сайтом")
 
 # --- Застосунки ---
 INSTALLED_APPS = [
@@ -131,7 +132,7 @@ CACHES = {
     }
 }
 
-# --- Захист форми звернень та входу в адмінку від спаму і перебору паролів ---
+# --- Захист форми звернень та входу в керування сайтом від спаму і перебору паролів ---
 CONTACT_RATE_LIMIT_COUNT = config("CONTACT_RATE_LIMIT_COUNT", default=3, cast=int)
 CONTACT_RATE_LIMIT_PERIOD = config("CONTACT_RATE_LIMIT_PERIOD", default=600, cast=int)
 

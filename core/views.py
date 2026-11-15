@@ -523,7 +523,7 @@ def redirect_page_html(request, section_slug: str, page_slug: str):
 
 
 def robots_txt(request):
-    """Віддає текстовий файл /robots.txt із посиланням на sitemap.xml та закритою адмінкою."""
+    """Віддає текстовий файл /robots.txt із посиланням на sitemap.xml."""
     site_url = getattr(settings, "SITE_URL", "").rstrip("/")
     base_url = (
         site_url if site_url else request.build_absolute_uri("/").rstrip("/")

@@ -1,4 +1,4 @@
-"""Проміжне ПЗ (middleware) для заголовків безпеки (CSP) та захисту входу в адмінку."""
+"""Проміжне ПЗ (middleware) для заголовків безпеки (CSP) та захисту входу в керування сайтом."""
 import hashlib
 import logging
 
@@ -54,7 +54,7 @@ def _admin_login_keys(request) -> tuple[str, str]:
 
 
 def _is_admin_login_limited(ip_key: str, pair_key: str) -> bool:
-    """Перевіряє ліміт входу в адмінку за IP (20/15хв) та за парою IP+логін (5/15хв). Відмова відкрито."""
+    """Перевіряє ліміт входу в керування сайтом за IP (20/15хв) та за парою IP+логін (5/15хв). Відмова відкрито."""
     pair_limit = getattr(settings, "ADMIN_LOGIN_RATE_LIMIT_COUNT", 5)
     ip_limit = getattr(settings, "ADMIN_LOGIN_IP_RATE_LIMIT_COUNT", 20)
     try:
@@ -70,13 +70,13 @@ def _is_admin_login_limited(ip_key: str, pair_key: str) -> bool:
         return False
     except Exception:
         logger.exception(
-            "Не вдалося перевірити ліміт входу в адмінку в кеші (відмова відкрито)"
+            "Не вдалося перевірити ліміт входу в керування сайтом в кеші (відмова відкрито)"
         )
         return False
 
 
 def _record_admin_login_failure(ip_key: str, pair_key: str) -> None:
-    """Збільшує обидва лічильники невдалих спроб входу в адмінку. Відмова відкрито."""
+    """Збільшує обидва лічильники невдалих спроб входу в керування сайтом. Відмова відкрито."""
     period = getattr(settings, "ADMIN_LOGIN_RATE_LIMIT_PERIOD", 900)
     try:
         with transaction.atomic():
@@ -86,7 +86,7 @@ def _record_admin_login_failure(ip_key: str, pair_key: str) -> None:
             cache.set(pair_key, pair_count + 1, timeout=period)
     except Exception:
         logger.exception(
-            "Не вдалося оновити лічильник невдалих спроб входу в адмінку (відмова відкрито)"
+            "Не вдалося оновити лічильник невдалих спроб входу в керування сайтом (відмова відкрито)"
         )
 
 
@@ -97,12 +97,12 @@ def _clear_admin_login_pair(pair_key: str) -> None:
             cache.delete(pair_key)
     except Exception:
         logger.exception(
-            "Не вдалося очистити лічильник входу в адмінку після успішної авторизації"
+            "Не вдалося очистити лічильник входу в керування сайтом після успішної авторизації"
         )
 
 
 class AdminLoginRateLimitMiddleware:
-    """Обмежує кількість невдалих спроб входу в адмінку через DatabaseCache."""
+    """Обмежує кількість невдалих спроб входу в керування сайтом через DatabaseCache."""
 
     def __init__(self, get_response):
         self.get_response = get_response
@@ -112,7 +112,7 @@ class AdminLoginRateLimitMiddleware:
             ip_key, pair_key = _admin_login_keys(request)
             if _is_admin_login_limited(ip_key, pair_key):
                 logger.warning(
-                    "Заблоковано спробу входу в адмінку (перевищено ліміт, ключ %s)",
+                    "Заблоковано спробу входу в керування сайтом (перевищено ліміт, ключ %s)",
                     pair_key[:22],
                 )
                 context = {
@@ -134,7 +134,7 @@ class AdminLoginRateLimitMiddleware:
             elif response.status_code == 200:
                 _record_admin_login_failure(ip_key, pair_key)
                 logger.warning(
-                    "Невдала спроба входу в адмінку (ключ %s)",
+                    "Невдала спроба входу в керування сайтом (ключ %s)",
                     pair_key[:22],
                 )
             return response
@@ -143,7 +143,7 @@ class AdminLoginRateLimitMiddleware:
 
 
 class ContentSecurityPolicyMiddleware:
-    """Додає заголовок Content-Security-Policy до всіх публічних сторінок (крім адмінки)."""
+    """Додає заголовок Content-Security-Policy до всіх публічних сторінок (крім керування сайтом)."""
 
     def __init__(self, get_response):
         self.get_response = get_response

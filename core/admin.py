@@ -1,5 +1,6 @@
-"""Налаштування панелі адміністратора для сайту КЗ «НРЦ «Оберіг»»."""
+"""Налаштування керування сайтом для КЗ «НРЦ «Оберіг»»."""
 from django import forms
+from django.conf import settings
 from django.contrib import admin, messages
 from django.db.models import (
     BooleanField,
@@ -33,12 +34,12 @@ from .models import (
     Sponsor,
 )
 
-# --- Заголовки адмін-панелі українською ---
-admin.site.site_header = "Адмін-панель НРЦ «Оберіг»"
-admin.site.site_title = "Адмін-панель НРЦ «Оберіг»"
-admin.site.index_title = "Адмін-панель НРЦ «Оберіг»"
+# --- Заголовки керування сайтом українською ---
+admin.site.site_header = settings.ADMIN_SITE_NAME
+admin.site.site_title = settings.ADMIN_SITE_NAME
+admin.site.index_title = settings.ADMIN_SITE_NAME
 
-# --- Порядок розділів на головній сторінці адмінки ---
+# --- Порядок розділів на головній сторінці керування сайтом ---
 ADMIN_MODEL_ORDER = {
     "Page": 1,
     "Section": 2,

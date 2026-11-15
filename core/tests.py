@@ -11,6 +11,7 @@ from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
 from django.conf import settings
+from django.contrib import admin
 from django.contrib.auth.models import User
 from django.core import mail
 from django.core.cache import cache
@@ -663,7 +664,7 @@ class ImportedSiteMapPagesTests(TestCase):
 
 @override_settings(STORAGES=TEST_STORAGES)
 class ContactsAndFormTests(TestCase):
-    """Перевірка сторінки контактів (/kontakty/), обробки форми #ask-form, захисту від спаму та адмінки звернень."""
+    """Перевірка сторінки контактів (/kontakty/), обробки форми #ask-form, захисту від спаму та керування зверненнями."""
 
     @classmethod
     def setUpTestData(cls):
@@ -1027,7 +1028,7 @@ class ContactsAndFormTests(TestCase):
         self.assertEqual(ContactMessage.objects.count(), 0)
 
     def test_admin_contact_message_readonly_and_permissions(self):
-        """Адмінка не дозволяє створювати звернення або змінювати текст/відправника, але дозволяє позначати прочитаним і видаляти."""
+        """Керування сайтом не дозволяє створювати звернення або змінювати текст/відправника, але дозволяє позначати прочитаним і видаляти."""
         admin_user = User.objects.create_superuser(
             username="admin_test",
             email="admin@example.com",
@@ -1035,7 +1036,7 @@ class ContactsAndFormTests(TestCase):
         )
         self.client.force_login(admin_user)
 
-        # 1. Створення нового звернення через адмінку заборонене (403)
+        # 1. Створення нового звернення через керування сайтом заборонене (403)
         resp_add_get = self.client.get(admin_path("core/contactmessage/add/"))
         self.assertEqual(resp_add_get.status_code, 403)
         resp_add_post = self.client.post(
@@ -1101,7 +1102,7 @@ class ContactsAndFormTests(TestCase):
 
 
 class Stage8SecurityAndDeployTests(TestCase):
-    """Тести 8-го кроку: сторінки помилок (404/500/403/400), CSP, захист входу в адмінку, ліміт фото, SEO та backup_site."""
+    """Тести 8-го кроку: сторінки помилок (404/500/403/400), CSP, захист входу в керування сайтом, ліміт фото, SEO та backup_site."""
 
     @classmethod
     def setUpTestData(cls):
@@ -1211,7 +1212,7 @@ class Stage8SecurityAndDeployTests(TestCase):
                         f"Знайдено недозволений вбудований <script> на {url}: <script{attrs}>{body[:80]}</script>",
                     )
 
-        # На сторінці входу в адмінку заголовок CSP НЕ застосовується
+        # На сторінці входу в керування сайтом заголовок CSP НЕ застосовується
         resp_admin = self.client.get(admin_path("login/"))
         self.assertNotIn("Content-Security-Policy", resp_admin.headers)
 
@@ -1228,7 +1229,7 @@ class Stage8SecurityAndDeployTests(TestCase):
         TRUST_X_FORWARDED_FOR=False,
     )
     def test_admin_login_rate_limit_pair_and_ip_and_fail_open(self):
-        """Вхід в адмінку обмежує 5 спроб на (IP+логін) та 20 спроб на IP (повертає 429 українською) і має відкриту відмову."""
+        """Вхід у керування сайтом обмежує 5 спроб на (IP+логін) та 20 спроб на IP (повертає 429 українською) і має відкриту відмову."""
         User.objects.create_superuser(
             username="editor_user",
             email="editor@example.com",
@@ -1322,7 +1323,7 @@ class Stage8SecurityAndDeployTests(TestCase):
 
     @override_settings(SITE_URL="https://oberih.if.ua")
     def test_robots_txt_and_sitemap_xml(self):
-        """Перевірка /robots.txt та /sitemap.xml: валідний XML, наявність опублікованих сторінок і відсутність чернеток та адмінки."""
+        """Перевірка /robots.txt та /sitemap.xml: валідний XML, наявність опублікованих сторінок і відсутність чернеток та сторінок керування сайтом."""
         resp_robots = self.client.get("/robots.txt")
         self.assertEqual(resp_robots.status_code, 200)
         self.assertTrue(resp_robots["Content-Type"].startswith("text/plain"))
@@ -1360,7 +1361,7 @@ class Stage8SecurityAndDeployTests(TestCase):
         )
         self.assertIn(f"https://oberih.if.ua/novyny/{pub_news.slug}/", locs)
 
-        # Чернетки сторінок, чернетки новин і адреса адмінки НЕ потрапляють у sitemap.xml
+        # Чернетки сторінок, чернетки новин і адреса керування сайтом НЕ потрапляють у sitemap.xml
         self.assertNotIn(
             "https://oberih.if.ua/reabilitatsiine-viddilennia/medychnyi-suprovid/",
             locs,
@@ -1404,7 +1405,7 @@ class Stage8SecurityAndDeployTests(TestCase):
                         validate_admin_url(candidate)
 
     def test_admin_url_access_and_old_predictable_paths_return_404(self):
-        """Старі та типові адреси адмінки повертають 404, а налаштований ADMIN_URL веде на сторінку входу."""
+        """Старі та типові адреси керування сайтом повертають 404, а налаштований ADMIN_URL веде на сторінку входу."""
         for old_path in (
             "/admin/",
             "/admin/login/",
@@ -1421,6 +1422,32 @@ class Stage8SecurityAndDeployTests(TestCase):
 
         resp_login = self.client.get(admin_path("login/"))
         self.assertEqual(resp_login.status_code, 200)
+
+    def test_admin_site_name_headers_login_and_no_public_mentions(self):
+        """Назва ADMIN_SITE_NAME використовується в заголовках admin.site і на сторінці входу та не розкриває керування сайтом на публічних сторінках."""
+        site_name = settings.ADMIN_SITE_NAME
+        self.assertTrue(site_name.strip())
+        for forbidden_word in ("admin", "адмін", "панель", "login", "вхід"):
+            self.assertNotIn(forbidden_word, site_name.lower())
+
+        self.assertEqual(admin.site.site_header, site_name)
+        self.assertEqual(admin.site.site_title, site_name)
+        self.assertEqual(admin.site.index_title, site_name)
+
+        resp_login = self.client.get(admin_path("login/"))
+        self.assertEqual(resp_login.status_code, 200)
+        login_html = resp_login.content.decode("utf-8")
+        self.assertIn(site_name, login_html)
+        self.assertNotIn("Адмін-панель", login_html)
+
+        for public_url in ("/", "/kontakty/", "/novyny/", "/pro-nas/"):
+            with self.subTest(public_url=public_url):
+                resp_pub = self.client.get(public_url)
+                self.assertEqual(resp_pub.status_code, 200)
+                pub_html = resp_pub.content.decode("utf-8")
+                self.assertNotIn(settings.ADMIN_URL.strip("/"), pub_html)
+                self.assertNotIn("Адмін-панель", pub_html)
+                self.assertNotIn("адмінк", pub_html.lower())
 
     def test_import_commands_require_yes_when_data_exists(self):
         """Команди import_site_map та import_home зупиняються без ключа --yes, якщо в базі вже є сторінки або новини."""
@@ -1717,7 +1744,7 @@ class Stage8SecurityAndDeployTests(TestCase):
 
 @override_settings(STORAGES=TEST_STORAGES)
 class Stage11DocumentsPrivacyAndPlaceholdersTests(TestCase):
-    """Тести 11-го кроку: документи без файлу, посилання на політику конфіденційності та пошук заглушок макета в адмінці."""
+    """Тести 11-го кроку: документи без файлу, посилання на політику конфіденційності та пошук заглушок макета в керуванні сайтом."""
 
     @classmethod
     def setUpTestData(cls):

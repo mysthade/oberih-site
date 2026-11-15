@@ -1,4 +1,4 @@
-"""Перевірка безпечної адреси адмін-панелі (ADMIN_URL)."""
+"""Перевірка безпечної адреси керування сайтом (ADMIN_URL)."""
 import re
 
 from django.core.exceptions import ImproperlyConfigured
