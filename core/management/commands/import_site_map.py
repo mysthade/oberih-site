@@ -100,9 +100,6 @@ class Command(BaseCommand):
             kind = b[0]
             if kind in ("docs", "people", "table", "list", "steps", "h2", "p"):
                 return False
-            if kind == "notice" and b[1] != todo_text:
-                # Якщо є інша примітка, перевіряємо, чи це не просто технічне застереження без жодного іншого вмісту
-                continue
         return True
 
     def handle(self, *args, **options):

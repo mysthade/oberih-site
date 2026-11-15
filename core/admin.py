@@ -69,6 +69,17 @@ def _ordered_get_app_list(request, app_label=None):
 
 admin.site.get_app_list = _ordered_get_app_list
 
+
+def _publication_badge(is_published: bool) -> str:
+    """Повертає HTML-бейдж статусу публікації для списків у керуванні сайтом."""
+    if is_published:
+        return format_html(
+            '<span class="oberih-badge oberih-badge--published">Опубліковано</span>'
+        )
+    return format_html(
+        '<span class="oberih-badge oberih-badge--draft">Чернетка</span>'
+    )
+
 # --- Загальний пошук по вмісту сайту в керуванні сайтом ---
 ADMIN_SEARCH_MIN_LENGTH = 2
 ADMIN_SEARCH_LIMIT_PER_TYPE = 20
@@ -724,13 +735,7 @@ class PageAdmin(SimpleHistoryAdmin):
 
     @admin.display(description="Статус публікації", ordering="is_published")
     def publication_status(self, obj: Page):
-        if obj.is_published:
-            return format_html(
-                '<span class="oberih-badge oberih-badge--published">Опубліковано</span>'
-            )
-        return format_html(
-            '<span class="oberih-badge oberih-badge--draft">Чернетка</span>'
-        )
+        return _publication_badge(obj.is_published)
 
     @admin.display(description="Документів без файлу", ordering="_missing_docs_count")
     def missing_docs_display(self, obj: Page):
@@ -811,13 +816,7 @@ class NewsItemAdmin(SimpleHistoryAdmin):
 
     @admin.display(description="Статус", ordering="is_published")
     def publication_status(self, obj: NewsItem):
-        if obj.is_published:
-            return format_html(
-                '<span class="oberih-badge oberih-badge--published">Опубліковано</span>'
-            )
-        return format_html(
-            '<span class="oberih-badge oberih-badge--draft">Чернетка</span>'
-        )
+        return _publication_badge(obj.is_published)
 
 
 # --- 4. Звернення з форми зворотного зв'язку (ContactMessage) ---

@@ -51,6 +51,7 @@ CONTACT_SUCCESS_MESSAGE = (
 CONTACT_RATE_LIMIT_MESSAGE = (
     "Ви надіслали забагато звернень поспіль. Будь ласка, зачекайте кілька хвилин і спробуйте знову."
 )
+CONTACT_SENT_REDIRECT_URL = "/kontakty/?sent=1#ask-form"
 
 PLACEHOLDER_DOT_SETS = (
     ("d1", "d2"),
@@ -60,6 +61,14 @@ PLACEHOLDER_DOT_SETS = (
     ("d9", "d10", "d11"),
     ("d12", "d13"),
 )
+
+
+def _assign_placeholder_dots(news_items) -> None:
+    """Призначає кожній новині набір «точок» для заглушки фото (по колу)."""
+    for idx, item in enumerate(news_items):
+        item.placeholder_dots = PLACEHOLDER_DOT_SETS[
+            idx % len(PLACEHOLDER_DOT_SETS)
+        ]
 
 
 # УВАГА щодо кешування: головна сторінка (/) та сторінка контактів (/kontakty/)
@@ -75,10 +84,7 @@ def home(request):
             "-published_date", "-id"
         )[:HOME_NEWS_LIMIT]
     )
-    for idx, item in enumerate(news_items):
-        item.placeholder_dots = PLACEHOLDER_DOT_SETS[
-            idx % len(PLACEHOLDER_DOT_SETS)
-        ]
+    _assign_placeholder_dots(news_items)
 
     sponsors = list(Sponsor.objects.order_by("order", "id"))
 
@@ -180,10 +186,7 @@ def news_list(request):
     paginator = Paginator(queryset, NEWS_PER_PAGE)
     page_obj = paginator.get_page(request.GET.get("page"))
     news_items = list(page_obj.object_list)
-    for idx, item in enumerate(news_items):
-        item.placeholder_dots = PLACEHOLDER_DOT_SETS[
-            idx % len(PLACEHOLDER_DOT_SETS)
-        ]
+    _assign_placeholder_dots(news_items)
 
     context = {
         "news_items": news_items,
@@ -216,6 +219,7 @@ def _is_ajax(request) -> bool:
 def get_client_ip(request) -> str:
     """Безпечно визначає адресу клієнта (CLIENT_IP_HEADER для PaaS або останній X-Forwarded-For при TRUST_X_FORWARDED_FOR=True)."""
     client_ip_header = (getattr(settings, "CLIENT_IP_HEADER", "") or "").strip()
+    remote_addr = (request.META.get("REMOTE_ADDR") or "").strip() or "unknown"
     if client_ip_header:
         raw_ip = (request.META.get(client_ip_header) or "").strip()
         if raw_ip:
@@ -223,7 +227,7 @@ def get_client_ip(request) -> str:
                 return str(ipaddress.ip_address(raw_ip))
             except ValueError:
                 pass
-        return (request.META.get("REMOTE_ADDR") or "").strip() or "unknown"
+        return remote_addr
 
     if getattr(settings, "TRUST_X_FORWARDED_FOR", False):
         xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
@@ -231,10 +235,7 @@ def get_client_ip(request) -> str:
             parts = [p.strip() for p in xff.split(",") if p.strip()]
             if parts:
                 return parts[-1]
-    return (request.META.get("REMOTE_ADDR") or "").strip() or "unknown"
-
-
-_get_client_ip = get_client_ip
+    return remote_addr
 
 
 def _rate_limit_key(request) -> str:
@@ -404,6 +405,22 @@ def _send_contact_notification(contact_msg: ContactMessage) -> None:
         )
 
 
+def _contacts_context(
+    *,
+    form_status_message: str = "",
+    error_field: str | None = None,
+    form_values: dict | None = None,
+) -> dict:
+    """Формує контекст для сторінки контактів (/kontakty/)."""
+    return {
+        "current_section_slug": "kontakty",
+        "current_page_slug": None,
+        "form_status_message": form_status_message,
+        "error_field": error_field,
+        "form_values": form_values if form_values is not None else {},
+    }
+
+
 @never_cache
 def contacts(request):
     """Відображає сторінку контактів (/kontakty/) та обробляє відправлення форми #ask-form."""
@@ -417,7 +434,7 @@ def contacts(request):
                 return JsonResponse(
                     {"ok": True, "message": CONTACT_SUCCESS_MESSAGE}
                 )
-            return HttpResponseRedirect("/kontakty/?sent=1#ask-form", status=303)
+            return HttpResponseRedirect(CONTACT_SENT_REDIRECT_URL, status=303)
 
         # 2. Перевірка ліміту запитів (rate limit)
         if _is_rate_limited(request):
@@ -426,13 +443,9 @@ def contacts(request):
                     {"ok": False, "message": CONTACT_RATE_LIMIT_MESSAGE},
                     status=429,
                 )
-            context = {
-                "current_section_slug": "kontakty",
-                "current_page_slug": None,
-                "form_status_message": CONTACT_RATE_LIMIT_MESSAGE,
-                "error_field": None,
-                "form_values": {},
-            }
+            context = _contacts_context(
+                form_status_message=CONTACT_RATE_LIMIT_MESSAGE
+            )
             return render(request, "contacts.html", context, status=429)
 
         # 3. Серверна валідація полів
@@ -449,13 +462,11 @@ def contacts(request):
                     },
                     status=400,
                 )
-            context = {
-                "current_section_slug": "kontakty",
-                "current_page_slug": None,
-                "form_status_message": error_msg,
-                "error_field": error_field,
-                "form_values": form_values or {},
-            }
+            context = _contacts_context(
+                form_status_message=error_msg,
+                error_field=error_field,
+                form_values=form_values or {},
+            )
             return render(request, "contacts.html", context, status=400)
 
         # 4. Збільшуємо лічильник ліміту та СПОЧАТКУ зберігаємо звернення в базу даних
@@ -476,19 +487,13 @@ def contacts(request):
             return JsonResponse(
                 {"ok": True, "message": CONTACT_SUCCESS_MESSAGE}
             )
-        return HttpResponseRedirect("/kontakty/?sent=1#ask-form", status=303)
+        return HttpResponseRedirect(CONTACT_SENT_REDIRECT_URL, status=303)
 
     # GET-запит: якщо передано ?sent=1, виводимо фіксований рядок з коду (ніколи не вміст параметра)
     form_status_message = (
         CONTACT_SUCCESS_MESSAGE if request.GET.get("sent") == "1" else ""
     )
-    context = {
-        "current_section_slug": "kontakty",
-        "current_page_slug": None,
-        "form_status_message": form_status_message,
-        "error_field": None,
-        "form_values": {},
-    }
+    context = _contacts_context(form_status_message=form_status_message)
     return render(request, "contacts.html", context)
 
 
@@ -522,12 +527,15 @@ def redirect_page_html(request, section_slug: str, page_slug: str):
     return HttpResponsePermanentRedirect(f"/{section_slug}/{page_slug}/")
 
 
+def _site_base_url(request) -> str:
+    """Повертає базову URL-адресу сайту без кінцевого слеша."""
+    site_url = getattr(settings, "SITE_URL", "").rstrip("/")
+    return site_url if site_url else request.build_absolute_uri("/").rstrip("/")
+
+
 def robots_txt(request):
     """Віддає текстовий файл /robots.txt із посиланням на sitemap.xml."""
-    site_url = getattr(settings, "SITE_URL", "").rstrip("/")
-    base_url = (
-        site_url if site_url else request.build_absolute_uri("/").rstrip("/")
-    )
+    base_url = _site_base_url(request)
     lines = [
         "User-agent: *",
         "Disallow:",
@@ -541,10 +549,7 @@ def robots_txt(request):
 
 def sitemap_xml(request):
     """Формує /sitemap.xml для всіх публічних опублікованих сторінок сайту."""
-    site_url = getattr(settings, "SITE_URL", "").rstrip("/")
-    base_url = (
-        site_url if site_url else request.build_absolute_uri("/").rstrip("/")
-    )
+    base_url = _site_base_url(request)
 
     entries: list[tuple[str, str | None]] = [
         (f"{base_url}/", None),
@@ -595,13 +600,17 @@ def sitemap_xml(request):
     )
 
 
-def error_404(request, exception=None):
-    """Відображає сторінку 404 у дизайні сайту."""
-    context = {
+def _error_context() -> dict:
+    """Повертає стандартний контекст навігації для сторінок помилок."""
+    return {
         "current_section_slug": None,
         "current_page_slug": None,
     }
-    return render(request, "404.html", context, status=404)
+
+
+def error_404(request, exception=None):
+    """Відображає сторінку 404 у дизайні сайту."""
+    return render(request, "404.html", _error_context(), status=404)
 
 
 def error_500(request):
@@ -613,11 +622,7 @@ def error_500(request):
 
 def error_403(request, exception=None):
     """Відображає сторінку 403 (доступ обмежено) у дизайні сайту."""
-    context = {
-        "current_section_slug": None,
-        "current_page_slug": None,
-    }
-    return render(request, "403.html", context, status=403)
+    return render(request, "403.html", _error_context(), status=403)
 
 
 def csrf_failure(request, reason=""):
@@ -630,20 +635,12 @@ def csrf_failure(request, reason=""):
             },
             status=403,
         )
-    context = {
-        "current_section_slug": None,
-        "current_page_slug": None,
-    }
-    return render(request, "403.html", context, status=403)
+    return render(request, "403.html", _error_context(), status=403)
 
 
 def error_400(request, exception=None):
     """Відображає сторінку 400 (некоректний запит) у дизайні сайту."""
-    context = {
-        "current_section_slug": None,
-        "current_page_slug": None,
-    }
-    return render(request, "400.html", context, status=400)
+    return render(request, "400.html", _error_context(), status=400)
 
 
 ALLOWED_MEDIA_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}

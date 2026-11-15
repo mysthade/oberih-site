@@ -542,7 +542,7 @@ class Command(BaseCommand):
                     stats["news_skipped"] += 1
                     continue
 
-                # Прибираємо пряму згадку про захардкоджений телефон, якщо є
+                # Якщо шаблон новини не містить тексту, використовуємо короткий анонс
                 body_text = template_body or summary
                 NewsItem.objects.create(
                     title=title,
