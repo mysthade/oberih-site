@@ -11,7 +11,15 @@ from .views import get_client_ip
 
 logger = logging.getLogger(__name__)
 
-ADMIN_LOGIN_PATH = "/admin-panel/login/"
+
+def admin_prefix() -> str:
+    return "/" + settings.ADMIN_URL
+
+
+def admin_login_path() -> str:
+    return admin_prefix() + "login/"
+
+
 ADMIN_LOGIN_RATE_LIMIT_MESSAGE = (
     "Забагато невдалих спроб входу. Зачекайте 15 хвилин і спробуйте знову."
 )
@@ -94,13 +102,13 @@ def _clear_admin_login_pair(pair_key: str) -> None:
 
 
 class AdminLoginRateLimitMiddleware:
-    """Обмежує кількість невдалих спроб входу на /admin-panel/login/ через DatabaseCache."""
+    """Обмежує кількість невдалих спроб входу в адмінку через DatabaseCache."""
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
-        if request.path == ADMIN_LOGIN_PATH and request.method == "POST":
+        if request.path == admin_login_path() and request.method == "POST":
             ip_key, pair_key = _admin_login_keys(request)
             if _is_admin_login_limited(ip_key, pair_key):
                 logger.warning(
@@ -135,7 +143,7 @@ class AdminLoginRateLimitMiddleware:
 
 
 class ContentSecurityPolicyMiddleware:
-    """Додає заголовок Content-Security-Policy до всіх публічних сторінок (крім /admin-panel/)."""
+    """Додає заголовок Content-Security-Policy до всіх публічних сторінок (крім адмінки)."""
 
     def __init__(self, get_response):
         self.get_response = get_response
@@ -144,7 +152,7 @@ class ContentSecurityPolicyMiddleware:
         response = self.get_response(request)
         if not getattr(settings, "CSP_ENABLED", True):
             return response
-        if request.path.startswith(("/admin-panel/", "/media/")):
+        if request.path.startswith((admin_prefix(), "/media/")):
             return response
         if "Content-Security-Policy" not in response:
             response["Content-Security-Policy"] = getattr(

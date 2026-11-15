@@ -2,6 +2,8 @@
 from pathlib import Path
 from decouple import Csv, config
 
+from .admin_url import validate_admin_url
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # --- Безпека та основні параметри ---
@@ -10,6 +12,7 @@ DEBUG = config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="127.0.0.1,localhost", cast=Csv())
 CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="", cast=Csv())
 SITE_URL = config("SITE_URL", default="").strip().rstrip("/")
+ADMIN_URL = validate_admin_url(config("ADMIN_URL", default=""))
 
 # --- Застосунки ---
 INSTALLED_APPS = [
@@ -169,7 +172,7 @@ SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SAMESITE = "Lax"
-SESSION_COOKIE_AGE = config("SESSION_COOKIE_AGE", default=28800, cast=int)  # 8 годин
+SESSION_COOKIE_AGE = config("SESSION_COOKIE_AGE", default=7200, cast=int)  # 2 години
 SESSION_SAVE_EVERY_REQUEST = True
 SESSION_COOKIE_SECURE = config("SESSION_COOKIE_SECURE", default=not DEBUG, cast=bool)
 CSRF_COOKIE_SECURE = config("CSRF_COOKIE_SECURE", default=not DEBUG, cast=bool)

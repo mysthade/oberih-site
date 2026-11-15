@@ -1,4 +1,4 @@
-"""Налаштування панелі адміністратора (/admin-panel/) для сайту КЗ «НРЦ «Оберіг»»."""
+"""Налаштування панелі адміністратора для сайту КЗ «НРЦ «Оберіг»»."""
 from django import forms
 from django.contrib import admin, messages
 from django.db.models import (

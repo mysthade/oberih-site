@@ -530,7 +530,7 @@ def robots_txt(request):
     )
     lines = [
         "User-agent: *",
-        "Disallow: /admin-panel/",
+        "Disallow:",
         f"Sitemap: {base_url}/sitemap.xml",
         "",
     ]

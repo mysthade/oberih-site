@@ -14,7 +14,7 @@ from django.conf import settings
 from django.contrib.auth.models import User
 from django.core import mail
 from django.core.cache import cache
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.mail.backends.base import BaseEmailBackend
 from django.core.management import call_command
@@ -23,6 +23,8 @@ from django.db import connection
 from django.test import Client, RequestFactory, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from PIL import Image
+
+from config.admin_url import FORBIDDEN_ADMIN_URL_WORDS, validate_admin_url
 
 from .context_processors import site_context
 from .models import (
@@ -39,6 +41,10 @@ from .models import (
     validate_image_file,
 )
 from .views import error_400, error_403, error_500, get_client_ip
+
+
+def admin_path(suffix: str = "") -> str:
+    return "/" + settings.ADMIN_URL + suffix
 
 
 class FailingEmailBackend(BaseEmailBackend):
@@ -148,8 +154,15 @@ class PublicSiteTests(TestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_reserved_section_slugs_validation(self):
-        """Заборонені системні адреси (admin-panel, media, static, novyny, kontakty) не проходять валідацію."""
-        for bad_slug in ("admin-panel", "media", "static", "novyny", "kontakty"):
+        """Заборонені системні адреси (ADMIN_URL, admin, media, static, novyny, kontakty) не проходять валідацію."""
+        for bad_slug in (
+            settings.ADMIN_URL.strip("/"),
+            "admin",
+            "media",
+            "static",
+            "novyny",
+            "kontakty",
+        ):
             sec = Section(slug=bad_slug, title="Тест")
             with self.assertRaises(ValidationError):
                 sec.full_clean()
@@ -1023,10 +1036,10 @@ class ContactsAndFormTests(TestCase):
         self.client.force_login(admin_user)
 
         # 1. Створення нового звернення через адмінку заборонене (403)
-        resp_add_get = self.client.get("/admin-panel/core/contactmessage/add/")
+        resp_add_get = self.client.get(admin_path("core/contactmessage/add/"))
         self.assertEqual(resp_add_get.status_code, 403)
         resp_add_post = self.client.post(
-            "/admin-panel/core/contactmessage/add/",
+            admin_path("core/contactmessage/add/"),
             data={"name": "Хтось", "email": "a@b.com", "message": "Текст"},
         )
         self.assertEqual(resp_add_post.status_code, 403)
@@ -1041,7 +1054,7 @@ class ContactsAndFormTests(TestCase):
             is_read=False,
         )
         resp_change = self.client.post(
-            f"/admin-panel/core/contactmessage/{msg.pk}/change/",
+            admin_path(f"core/contactmessage/{msg.pk}/change/"),
             data={
                 "name": "Підроблене Ім'я",
                 "email": "hacked@example.com",
@@ -1068,7 +1081,7 @@ class ContactsAndFormTests(TestCase):
             is_read=False,
         )
         resp_action = self.client.post(
-            "/admin-panel/core/contactmessage/",
+            admin_path("core/contactmessage/"),
             data={
                 "action": "mark_as_read",
                 "_selected_action": [str(msg2.pk)],
@@ -1080,7 +1093,7 @@ class ContactsAndFormTests(TestCase):
 
         # 4. Видалення звернення (персональних даних) дозволене
         resp_del = self.client.post(
-            f"/admin-panel/core/contactmessage/{msg.pk}/delete/",
+            admin_path(f"core/contactmessage/{msg.pk}/delete/"),
             data={"post": "yes"},
         )
         self.assertEqual(resp_del.status_code, 302)
@@ -1198,8 +1211,8 @@ class Stage8SecurityAndDeployTests(TestCase):
                         f"Знайдено недозволений вбудований <script> на {url}: <script{attrs}>{body[:80]}</script>",
                     )
 
-        # На /admin-panel/login/ заголовок CSP НЕ застосовується
-        resp_admin = self.client.get("/admin-panel/login/")
+        # На сторінці входу в адмінку заголовок CSP НЕ застосовується
+        resp_admin = self.client.get(admin_path("login/"))
         self.assertNotIn("Content-Security-Policy", resp_admin.headers)
 
         # При CSP_ENABLED=False заголовок вимикається
@@ -1225,7 +1238,7 @@ class Stage8SecurityAndDeployTests(TestCase):
         # 1. Ліміт на пару (адреса + логін): 5 невдалих спроб -> 200, 6-та -> 429
         for i in range(5):
             resp = self.client.post(
-                "/admin-panel/login/",
+                admin_path("login/"),
                 data={"username": "editor_user", "password": "wrong_password"},
                 REMOTE_ADDR="198.51.100.10",
             )
@@ -1234,7 +1247,7 @@ class Stage8SecurityAndDeployTests(TestCase):
             )
 
         resp_blocked = self.client.post(
-            "/admin-panel/login/",
+            admin_path("login/"),
             data={"username": "editor_user", "password": "ValidAdminPassword123!"},
             REMOTE_ADDR="198.51.100.10",
         )
@@ -1246,7 +1259,7 @@ class Stage8SecurityAndDeployTests(TestCase):
         cache.clear()
         for i in range(20):
             resp_ip = self.client.post(
-                "/admin-panel/login/",
+                admin_path("login/"),
                 data={"username": f"attacker_login_{i}", "password": "wrong"},
                 REMOTE_ADDR="198.51.100.77",
             )
@@ -1254,7 +1267,7 @@ class Stage8SecurityAndDeployTests(TestCase):
 
         # 21-ша спроба з цього ж IP (навіть з новим логіном) блокується зі статусом 429
         resp_ip_blocked = self.client.post(
-            "/admin-panel/login/",
+            admin_path("login/"),
             data={"username": "brand_new_login", "password": "wrong"},
             REMOTE_ADDR="198.51.100.77",
         )
@@ -1272,7 +1285,7 @@ class Stage8SecurityAndDeployTests(TestCase):
             self.assertLogs("core.middleware", level=logging.ERROR),
         ):
             resp_ok = self.client.post(
-                "/admin-panel/login/",
+                admin_path("login/"),
                 data={
                     "username": "editor_user",
                     "password": "ValidAdminPassword123!",
@@ -1315,7 +1328,8 @@ class Stage8SecurityAndDeployTests(TestCase):
         self.assertTrue(resp_robots["Content-Type"].startswith("text/plain"))
         robots_text = resp_robots.content.decode("utf-8")
         self.assertIn("User-agent: *", robots_text)
-        self.assertIn("Disallow: /admin-panel/", robots_text)
+        self.assertIn("Disallow:", robots_text)
+        self.assertNotIn(settings.ADMIN_URL.strip("/"), robots_text)
         self.assertIn("Sitemap: https://oberih.if.ua/sitemap.xml", robots_text)
 
         # Опублікуємо одну новину, а решту залишимо чернетками
@@ -1346,7 +1360,7 @@ class Stage8SecurityAndDeployTests(TestCase):
         )
         self.assertIn(f"https://oberih.if.ua/novyny/{pub_news.slug}/", locs)
 
-        # Чернетки сторінок, чернетки новин і /admin-panel/ НЕ потрапляють у sitemap.xml
+        # Чернетки сторінок, чернетки новин і адреса адмінки НЕ потрапляють у sitemap.xml
         self.assertNotIn(
             "https://oberih.if.ua/reabilitatsiine-viddilennia/medychnyi-suprovid/",
             locs,
@@ -1356,7 +1370,57 @@ class Stage8SecurityAndDeployTests(TestCase):
                 f"https://oberih.if.ua/novyny/{draft_news.slug}/", locs
             )
         for loc in locs:
-            self.assertNotIn("/admin-panel/", loc)
+            self.assertNotIn(admin_path(), loc)
+            self.assertNotIn(settings.ADMIN_URL.strip("/"), loc)
+
+    def test_validate_admin_url_rejects_invalid_and_accepts_valid(self):
+        """validate_admin_url відхиляє порожні, короткі, невірні за форматом або передбачувані значення і приймає валідне."""
+        valid = "oberih-x9k2m7p4q8w3v5z1/"
+        self.assertEqual(validate_admin_url(valid), valid)
+
+        invalid_values = [
+            "",
+            "   ",
+            "/oberih-x9k2m7p4q8w3v5z1/",
+            "oberih-x9k2m7p4q8w3v5z1",
+            "oberih-short123/",
+            "oberih_x9k2m7p4q8w3v5z1/",
+            "oberih/x9k2m7p4q8w3v5z1/",
+            "оберіг-x9k2m7p4q8w3v5z1/",
+            "oberih.x9k2m7p4q8w3v5z1/",
+        ]
+        for bad in invalid_values:
+            with self.subTest(bad=bad):
+                with self.assertRaises(ImproperlyConfigured):
+                    validate_admin_url(bad)
+
+        for word in FORBIDDEN_ADMIN_URL_WORDS:
+            for candidate in (
+                f"oberih-{word}-x9k2m7p4q8w3/",
+                f"OBERIH-{word.upper()}-X9K2M7P4Q8W3/",
+            ):
+                with self.subTest(word=word, candidate=candidate):
+                    with self.assertRaises(ImproperlyConfigured):
+                        validate_admin_url(candidate)
+
+    def test_admin_url_access_and_old_predictable_paths_return_404(self):
+        """Старі та типові адреси адмінки повертають 404, а налаштований ADMIN_URL веде на сторінку входу."""
+        for old_path in (
+            "/admin/",
+            "/admin/login/",
+            "/administrator/",
+            "/wp-admin/",
+        ):
+            with self.subTest(old_path=old_path):
+                resp = self.client.get(old_path)
+                self.assertEqual(resp.status_code, 404)
+
+        resp_root = self.client.get(admin_path())
+        self.assertEqual(resp_root.status_code, 302)
+        self.assertIn(admin_path("login/"), resp_root["Location"])
+
+        resp_login = self.client.get(admin_path("login/"))
+        self.assertEqual(resp_login.status_code, 200)
 
     def test_import_commands_require_yes_when_data_exists(self):
         """Команди import_site_map та import_home зупиняються без ключа --yes, якщо в базі вже є сторінки або новини."""
@@ -1794,12 +1858,12 @@ class Stage11DocumentsPrivacyAndPlaceholdersTests(TestCase):
         self.client.force_login(self.admin_user)
 
         # 1. Рівно 22 сторінки з 46 після import_site_map позначаються як такі, що містять заглушку
-        resp_ph_yes = self.client.get("/admin-panel/core/page/?has_placeholder=yes")
+        resp_ph_yes = self.client.get(admin_path("core/page/?has_placeholder=yes"))
         self.assertEqual(resp_ph_yes.status_code, 200)
         changelist_yes = resp_ph_yes.context["cl"]
         self.assertEqual(changelist_yes.result_count, 22)
 
-        resp_ph_no = self.client.get("/admin-panel/core/page/?has_placeholder=no")
+        resp_ph_no = self.client.get(admin_path("core/page/?has_placeholder=no"))
         self.assertEqual(resp_ph_no.status_code, 200)
         changelist_no = resp_ph_no.context["cl"]
         self.assertEqual(changelist_no.result_count, 46 - 22)
@@ -1827,7 +1891,7 @@ class Stage11DocumentsPrivacyAndPlaceholdersTests(TestCase):
             data=["Перша вправа, наприклад дихальна гімнастика", "Друга вправа для моторики"],
         )
 
-        resp_check_clean = self.client.get("/admin-panel/core/page/?has_placeholder=yes")
+        resp_check_clean = self.client.get(admin_path("core/page/?has_placeholder=yes"))
         self.assertEqual(resp_check_clean.status_code, 200)
         ph_yes_ids = set(
             resp_check_clean.context["cl"].queryset.values_list("pk", flat=True)
@@ -1841,7 +1905,7 @@ class Stage11DocumentsPrivacyAndPlaceholdersTests(TestCase):
 
         # 3. Перевірка відсутності N+1 запитів у PageAdmin changelist
         with CaptureQueriesContext(connection) as ctx_before:
-            resp_list_1 = self.client.get("/admin-panel/core/page/")
+            resp_list_1 = self.client.get(admin_path("core/page/"))
             self.assertEqual(resp_list_1.status_code, 200)
         queries_before = len(ctx_before)
 
@@ -1868,7 +1932,7 @@ class Stage11DocumentsPrivacyAndPlaceholdersTests(TestCase):
             )
 
         with CaptureQueriesContext(connection) as ctx_after:
-            resp_list_2 = self.client.get("/admin-panel/core/page/")
+            resp_list_2 = self.client.get(admin_path("core/page/"))
             self.assertEqual(resp_list_2.status_code, 200)
         queries_after = len(ctx_after)
 
@@ -1879,15 +1943,15 @@ class Stage11DocumentsPrivacyAndPlaceholdersTests(TestCase):
         )
 
         # 4. Перевірка DocumentAdmin та фільтра «Наявність файлу» (has_file=no / has_file=yes)
-        resp_doc_all = self.client.get("/admin-panel/core/document/")
+        resp_doc_all = self.client.get(admin_path("core/document/"))
         self.assertEqual(resp_doc_all.status_code, 200)
         self.assertIn("✘ Без файлу", resp_doc_all.content.decode("utf-8"))
 
-        resp_doc_no = self.client.get("/admin-panel/core/document/?has_file=no")
+        resp_doc_no = self.client.get(admin_path("core/document/?has_file=no"))
         self.assertEqual(resp_doc_no.status_code, 200)
         self.assertEqual(resp_doc_no.context["cl"].result_count, 45 + 5)
 
-        resp_doc_yes = self.client.get("/admin-panel/core/document/?has_file=yes")
+        resp_doc_yes = self.client.get(admin_path("core/document/?has_file=yes"))
         self.assertEqual(resp_doc_yes.status_code, 200)
         self.assertEqual(resp_doc_yes.context["cl"].result_count, 0)
 

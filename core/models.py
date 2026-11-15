@@ -356,7 +356,6 @@ class SiteSettings(models.Model):
 # --- 2. Розділ сайту ---
 RESERVED_SECTION_SLUGS = frozenset(
     {
-        "admin-panel",
         "admin",
         "media",
         "static",
@@ -375,7 +374,8 @@ RESERVED_SECTION_SLUGS = frozenset(
 def validate_section_slug(value: str) -> None:
     """Забороняє використовувати системні адреси як slug розділу."""
     cleaned = (value or "").strip().lower()
-    if cleaned in RESERVED_SECTION_SLUGS:
+    admin_slug = getattr(settings, "ADMIN_URL", "").strip("/").lower()
+    if cleaned in RESERVED_SECTION_SLUGS or (admin_slug and cleaned == admin_slug):
         raise ValidationError(
             f"Адреса «{value}» зарезервована системою (службовий розділ сайту). "
             "Будь ласка, оберіть іншу назву латиницею."
