@@ -2,6 +2,7 @@
 from django import forms
 from django.conf import settings
 from django.contrib import admin, messages
+from django.contrib.admin.utils import unquote
 from django.db.models import (
     BooleanField,
     Case,
@@ -428,7 +429,7 @@ class BlockAdminForm(forms.ModelForm):
                 "placeholder": "Перший пункт\nДругий пункт\nТретій пункт",
             }
         ),
-        help_text="Використовується для маркованого списку або нумерованих кроків. Кожен рядок стане окремим пунктом.",
+        help_text="Заповнюється лише для списку або кроків — кожен пункт пишіть з нового рядка.",
     )
     table_caption = forms.CharField(
         label="Заголовок (підпис) таблиці",
@@ -436,7 +437,7 @@ class BlockAdminForm(forms.ModelForm):
         widget=forms.TextInput(
             attrs={"placeholder": "Наприклад: Режим роботи закладу"}
         ),
-        help_text="Коротка назва таблиці (обов'язкова для доступності).",
+        help_text="Коротка назва таблиці, яка показується над нею (лише для типу «Таблиця»).",
     )
     table_text = forms.CharField(
         label="Таблиця (перший рядок: заголовки через « | », далі рядки)",
@@ -452,8 +453,7 @@ class BlockAdminForm(forms.ModelForm):
             }
         ),
         help_text=(
-            "Перший рядок — назви колонок, розділені знаком « | ». "
-            "Кожен наступний рядок — дані клітинок через « | »."
+            "Перший рядок — назви колонок через « | », кожен наступний рядок — дані клітинок через « | »."
         ),
     )
 
@@ -467,6 +467,14 @@ class BlockAdminForm(forms.ModelForm):
             "table_caption",
             "table_text",
         )
+        labels = {
+            "order": "Порядковий номер (1, 2, 3...)",
+        }
+        help_texts = {
+            "block_type": "Оберіть вигляд блоку: звичайний текст, підзаголовок, список, кроки, примітка в рамці або таблиця.",
+            "order": "Порядок блоку на сторінці: менше число показується вище.",
+            "text": "Основний текст абзацу, підзаголовка або примітки (для списків і таблиць заповнюйте поля нижче).",
+        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -570,6 +578,171 @@ class BlockAdminForm(forms.ModelForm):
         super()._post_clean()
 
 
+# --- Форми керування сайтом із зрозумілими підказками (без зміни моделей і міграцій) ---
+class PageAdminForm(forms.ModelForm):
+    class Meta:
+        model = Page
+        fields = "__all__"
+        labels = {
+            "slug": "Коротка адреса сторінки (латиницею)",
+            "lead": "Короткий опис під заголовком",
+            "meta_description": "Опис для пошуку Google (необов’язково)",
+        }
+        help_texts = {
+            "section": "Оберіть розділ меню, у якому має з’явитися ця сторінка.",
+            "title": "Заголовок сторінки, який бачать відвідувачі на сайті та в меню.",
+            "slug": "Коротка назва латиницею для посилання — заповнюється автоматично, зазвичай змінювати не потрібно.",
+            "lead": "Кілька речень під заголовком, які коротко пояснюють зміст сторінки (необов’язково).",
+            "is_published": "Якщо галочки немає, сторінку бачите лише ви — відвідувачі її не побачать.",
+            "docs_first": "Поставте галочку, якщо список документів має бути зверху сторінки, перед текстом.",
+            "order": "Порядок у списку: менше число показується вище (наприклад: 1, 2, 3).",
+            "meta_description": "Короткий опис для пошуку Google (можна залишити порожнім — підставиться текст з опису вище).",
+        }
+
+
+class SectionAdminForm(forms.ModelForm):
+    class Meta:
+        model = Section
+        fields = "__all__"
+        labels = {
+            "slug": "Коротка адреса розділу (латиницею)",
+            "lead": "Короткий опис розділу",
+        }
+        help_texts = {
+            "title": "Назва пункту в головному меню сайту та заголовок сторінки розділу.",
+            "slug": "Частина веб-адреси розділу латиницею — краще не змінювати, щоб не зламалися старі посилання.",
+            "lead": "Кілька речень під заголовком, які пояснюють, що знаходиться в цьому розділі (необов’язково).",
+            "color": "Колір оформлення заголовка розділу, бокового меню та карток сторінок цього розділу.",
+            "icon": "Значок розділу (резервне поле оформлення; зараз на сайті не відображається).",
+            "order": "Порядок у головному меню: менше число показується лівіше (наприклад: 1, 2, 3).",
+            "show_in_menu": "Якщо галочки немає, розділ прихований із головного меню, але відкривається за прямим посиланням.",
+        }
+
+
+class NewsItemAdminForm(forms.ModelForm):
+    class Meta:
+        model = NewsItem
+        fields = "__all__"
+        labels = {
+            "slug": "Коротка адреса новини (латиницею)",
+            "accent_color": "Колір смужки на картці",
+        }
+        help_texts = {
+            "title": "Короткий і зрозумілий заголовок новини або оголошення.",
+            "slug": "Частина веб-адреси новини латиницею — заповнюється автоматично із заголовка.",
+            "category": "Коротка рубрика на картці новини (наприклад: Події, Батькам, Оголошення).",
+            "accent_color": "Колір верхньої смужки та рубрики на картці новини.",
+            "published_date": "Дата події або новини — новіші дати показуються на сайті першими.",
+            "is_published": "Якщо галочки немає, новина збережена як чернетка — відвідувачі її не бачать.",
+            "summary": "Короткий опис (2–3 речення) для картки новини на головній сторінці.",
+            "body": "Основний текст новини — щоб почати новий абзац, залиште один порожній рядок.",
+            "photo": "Фотографія до новини (JPG або PNG, до 10 МБ); фото дітей додавайте лише за письмовою згодою батьків.",
+        }
+
+
+class DocumentAdminForm(forms.ModelForm):
+    class Meta:
+        model = Document
+        fields = "__all__"
+        help_texts = {
+            "page": "Оберіть сторінку сайту, на якій має бути цей документ.",
+            "title": "Зрозуміла назва документа, яку побачать відвідувачі (наприклад: Статут закладу).",
+            "file": "Файл у форматі PDF (до 20 МБ); якщо документ ще готується, залиште поле порожнім.",
+            "order": "Порядок у списку документів: менше число показується вище.",
+            "show_st30_notice": "Поставте галочку, якщо під документом потрібна примітка про ст. 30 Закону України «Про освіту».",
+        }
+
+
+class PersonAdminForm(forms.ModelForm):
+    class Meta:
+        model = Person
+        fields = "__all__"
+        help_texts = {
+            "page": "Оберіть сторінку, на якій має показуватися картка працівника.",
+            "position": "Посада працівника (наприклад: Директор, Практичний психолог, Вчитель-логопед).",
+            "full_name": "Прізвище, ім’я та по батькові (можна залишити порожнім без згоди, але обов’язкове, якщо ставите галочку згоди).",
+            "photo": "Фотографія працівника (JPG або PNG, до 10 МБ), якщо вона потрібна на картці.",
+            "consent_given": "Без цієї галочки людина прихована на сайті — ставте її лише за наявності письмової згоди.",
+            "order": "Порядок картки на сторінці: менше число показується вище.",
+        }
+
+
+class SponsorAdminForm(forms.ModelForm):
+    class Meta:
+        model = Sponsor
+        fields = "__all__"
+        help_texts = {
+            "name": "Назва компанії, фонду чи благодійника.",
+            "logo": "Зображення логотипа (PNG або JPG, до 10 МБ); якщо логотипа ще немає, залиште поле порожнім.",
+            "url": "Необов’язкове посилання на сайт благодійника (починається з http:// або https://).",
+            "order": "Порядок у списку спонсорів: менше число показується раніше.",
+        }
+
+
+class HomePageAdminForm(forms.ModelForm):
+    class Meta:
+        model = HomePage
+        fields = "__all__"
+        labels = {
+            "hero_eyebrow": "Малий підпис над заголовком",
+            "hero_title": "Головний заголовок",
+            "hero_title_em": "Виділена частина заголовка (курсив)",
+            "hero_lead": "Короткий вступний текст",
+            "about_eyebrow": "Малий підпис над заголовком",
+            "news_eyebrow": "Малий підпис над заголовком",
+            "docs_eyebrow": "Малий підпис над заголовком",
+            "safety_eyebrow": "Малий підпис над заголовком",
+            "welcome_eyebrow": "Малий підпис над заголовком",
+            "sponsors_eyebrow": "Малий підпис над заголовком",
+        }
+        help_texts = {
+            "hero_eyebrow": "Малий рядок над головним заголовком у верхній частині головної сторінки.",
+            "hero_title": "Головний заголовок у самому верху головної сторінки.",
+            "hero_title_em": "Частина головного заголовка, яка виділяється кольоровим курсивом (необов’язково).",
+            "hero_lead": "Короткий опис закладу під головним заголовком.",
+            "hero_fact_1": "Коротка кольорова плашка-факт під кнопками на першому екрані.",
+            "hero_fact_2": "Коротка кольорова плашка-факт під кнопками на першому екрані.",
+            "hero_fact_3": "Коротка кольорова плашка-факт під кнопками на першому екрані.",
+            "about_eyebrow": "Малий підпис над заголовком цього блоку на головній сторінці.",
+            "about_title": "Заголовок цього блоку на головній сторінці.",
+            "about_text": "Основний текст про заклад — абзаци розділяйте порожнім рядком.",
+            "about_quote": "Виділена цитата під описом закладу (можна залишити порожнім).",
+            "about_quote_note": "Дрібний підпис під цитатою (можна залишити порожнім).",
+            "news_eyebrow": "Малий підпис над заголовком цього блоку на головній сторінці.",
+            "news_title": "Заголовок цього блоку на головній сторінці.",
+            "docs_eyebrow": "Малий підпис над заголовком цього блоку на головній сторінці.",
+            "docs_title": "Заголовок цього блоку на головній сторінці.",
+            "docs_note": "Коротке пояснення поруч зі списком основних документів на головній сторінці.",
+            "safety_eyebrow": "Малий підпис над заголовком цього блоку на головній сторінці.",
+            "safety_title": "Заголовок цього блоку на головній сторінці.",
+            "safety_text": "Текст блоку про допомогу у випадку булінгу та безпеку дітей.",
+            "welcome_eyebrow": "Малий підпис над заголовком цього блоку на головній сторінці.",
+            "welcome_title": "Заголовок цього блоку на головній сторінці.",
+            "welcome_text": "Коротке запрошення для батьків і відвідувачів на головній сторінці.",
+            "welcome_image": "Фото або ілюстрація для блоку «Запрошуємо» (JPG або PNG, до 10 МБ; якщо не вибрано, показується стандартне зображення).",
+            "sponsors_eyebrow": "Малий підпис над заголовком цього блоку на головній сторінці.",
+            "sponsors_title": "Заголовок цього блоку на головній сторінці.",
+            "sponsors_text": "Текст подяки благодійникам над списком логотипів.",
+            "sponsors_note": "Необов’язкова примітка під логотипами спонсорів.",
+        }
+
+
+class SiteSettingsAdminForm(forms.ModelForm):
+    class Meta:
+        model = SiteSettings
+        fields = "__all__"
+        help_texts = {
+            "phone": "Основний номер телефону закладу (від 10 цифр із кодом міста чи оператора) — показується в шапці, меню та контактах.",
+            "email": "Офіційна електронна пошта закладу, куди надходять запитання відвідувачів.",
+            "address": "Повна поштова адреса закладу для шапки сайту та контактів.",
+            "director_name": "Прізвище, ім’я та по батькові керівника закладу.",
+            "map_url": "Посилання на точку закладу на Google Картах.",
+            "footer_text": "Короткий підпис у самому низу всіх сторінок сайту.",
+            "schedule_notice": "Необов’язкове повідомлення під формою на сторінці контактів (наприклад, графік прийому).",
+            "privacy_policy_page": "Сторінка з правилами обробки персональних даних, на яку веде посилання біля галочки згоди у формі (необов’язково).",
+        }
+
+
 # --- Базовий клас для одиничних записів (SiteSettings, HomePage) ---
 class SingletonModelAdmin(SimpleHistoryAdmin):
     """Адмін-клас для моделей з єдиним записом: одразу відкриває редагування."""
@@ -595,7 +768,7 @@ class BlockInline(admin.StackedInline):
     form = BlockAdminForm
     extra = 0
     classes = ["collapse"]
-    verbose_name = "Блок тексту, списку або таблиці"
+    verbose_name = "Блок вмісту"
     verbose_name_plural = "1. Текстові блоки, списки та таблиці сторінки"
     description = (
         "Тут редагується основний текст сторінки: абзаци, підзаголовки, списки та таблиці. "
@@ -605,10 +778,11 @@ class BlockInline(admin.StackedInline):
 
 class DocumentInline(admin.TabularInline):
     model = Document
+    form = DocumentAdminForm
     extra = 0
     classes = ["collapse"]
     fields = ("order", "title", "file", "show_st30_notice")
-    verbose_name = "Документ (PDF)"
+    verbose_name = "Документ"
     verbose_name_plural = "2. Офіційні документи (PDF) на цій сторінці"
     description = (
         f"Прикріпіть PDF-файли (до {MAX_PDF_SIZE_MB} МБ), які мають відображатися на сторінці. "
@@ -619,10 +793,11 @@ class DocumentInline(admin.TabularInline):
 
 class PersonInline(admin.TabularInline):
     model = Person
+    form = PersonAdminForm
     extra = 0
     classes = ["collapse"]
     fields = ("order", "position", "full_name", "photo", "consent_given")
-    verbose_name = "Картка працівника"
+    verbose_name = "Працівник"
     verbose_name_plural = "3. Працівники на цій сторінці (Адміністрація / Педагогічний колектив)"
     description = (
         "Картки працівників закладу. УВАГА: картка з'явиться на сайті ЛИШЕ тоді, "
@@ -677,8 +852,31 @@ class PageHasPlaceholderFilter(admin.SimpleListFilter):
 
 
 # --- 1. Сторінки сайту (Page) ---
+PROTECTED_PAGE_SLUGS = frozenset(
+    {
+        ("ofitsiina-storinka", "pravyla-pryiomu"),
+        ("prozorist-ta-vidkrytist", "dostupnist-dlia-osib-z-oop"),
+        ("osvitnia-diialnist", "rozklad-zaniat"),
+        ("reabilitatsiine-viddilennia", "psykholohichna-sluzhba"),
+        ("reabilitatsiine-viddilennia", "korektsiino-rozvytkova-robota"),
+        ("ofitsiina-storinka", "statut"),
+        ("ofitsiina-storinka", "litsenziia"),
+        ("prozorist-ta-vidkrytist", "finansova-zvitnist"),
+        ("prozorist-ta-vidkrytist", "richnyi-zvit"),
+        ("bezpeka-ta-zakhyst", "buling"),
+        ("prozorist-ta-vidkrytist", "vakansii"),
+        ("bezpeka-ta-zakhyst", "povitriana-tryvoha"),
+        ("bezpeka-ta-zakhyst", "bezpeka-v-interneti"),
+        ("pro-nas", "misiya-i-viziya"),
+        ("pro-nas", "administratsiia"),
+        ("pro-nas", "pedahohichnyi-kolektyv"),
+    }
+)
+
+
 @admin.register(Page)
 class PageAdmin(SimpleHistoryAdmin):
+    form = PageAdminForm
     list_display = (
         "title",
         "section",
@@ -712,12 +910,21 @@ class PageAdmin(SimpleHistoryAdmin):
                 "fields": (
                     "section",
                     "title",
-                    "slug",
                     "lead",
                     ("is_published", "docs_first"),
-                    "order",
                 ),
-                "description": "Основні налаштування сторінки. Нижче у згорнутих блоках редагуються тексти, документи та працівники.",
+                "description": (
+                    "Основні налаштування сторінки. Нижче у згорнутих розділах «1. Текстові блоки…», "
+                    "«2. Офіційні документи…» та «3. Працівники…» натисніть «Показати», щоб додати "
+                    "абзаци, списки, таблиці, PDF-файли (до 20 МБ) або картки працівників (показуються лише зі згодою)."
+                ),
+            },
+        ),
+        (
+            "Додатково (адреса та порядок)",
+            {
+                "classes": ("collapse",),
+                "fields": ("slug", "order"),
             },
         ),
         (
@@ -755,6 +962,38 @@ class PageAdmin(SimpleHistoryAdmin):
             )
         return "—"
 
+    def change_view(self, request, object_id, form_url="", extra_context=None):
+        if request.method == "GET":
+            obj = self.get_object(request, unquote(object_id))
+            if (
+                obj is not None
+                and self.has_view_or_change_permission(request, obj)
+                and (obj.section.slug, obj.slug) in PROTECTED_PAGE_SLUGS
+            ):
+                messages.warning(
+                    request,
+                    "Увага: не знімайте публікацію й не змінюйте адресу цієї сторінки: "
+                    "на неї є пряме посилання з головної сторінки або з нижньої частини сайту.",
+                )
+        return super().change_view(
+            request, object_id, form_url=form_url, extra_context=extra_context
+        )
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        if obj.is_published:
+            self.message_user(
+                request,
+                f"Сторінка «{obj.title}» збережена та опублікована — вона вже видима відвідувачам на сайті.",
+                messages.INFO,
+            )
+        else:
+            self.message_user(
+                request,
+                f"Сторінка «{obj.title}» збережена як чернетка — на сайті вона поки прихована від відвідувачів.",
+                messages.INFO,
+            )
+
     def delete_view(self, request, object_id, extra_context=None):
         extra_context = extra_context or {}
         extra_context["title"] = (
@@ -772,6 +1011,7 @@ class PageAdmin(SimpleHistoryAdmin):
 # --- 2. Розділи меню (Section) ---
 @admin.register(Section)
 class SectionAdmin(SimpleHistoryAdmin):
+    form = SectionAdminForm
     list_display = ("title", "order", "show_in_menu", "color", "slug")
     list_editable = ("order", "show_in_menu")
     prepopulated_fields = {"slug": ("title",)}
@@ -781,6 +1021,7 @@ class SectionAdmin(SimpleHistoryAdmin):
 # --- 3. Новини (NewsItem) ---
 @admin.register(NewsItem)
 class NewsItemAdmin(SimpleHistoryAdmin):
+    form = NewsItemAdminForm
     list_display = (
         "title",
         "category",
@@ -800,13 +1041,19 @@ class NewsItemAdmin(SimpleHistoryAdmin):
             {
                 "fields": (
                     "title",
-                    "slug",
-                    ("category", "accent_color"),
+                    "category",
                     ("published_date", "is_published"),
                     "summary",
                     "body",
                     "photo",
                 )
+            },
+        ),
+        (
+            "Додатково (адреса та колір картки)",
+            {
+                "classes": ("collapse",),
+                "fields": ("slug", "accent_color"),
             },
         ),
     )
@@ -817,6 +1064,21 @@ class NewsItemAdmin(SimpleHistoryAdmin):
     @admin.display(description="Статус", ordering="is_published")
     def publication_status(self, obj: NewsItem):
         return _publication_badge(obj.is_published)
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        if obj.is_published:
+            self.message_user(
+                request,
+                f"Новина «{obj.title}» збережена та опублікована — вона вже показується на сайті.",
+                messages.INFO,
+            )
+        else:
+            self.message_user(
+                request,
+                f"Новина «{obj.title}» збережена як чернетка — на сайті вона поки не показується.",
+                messages.INFO,
+            )
 
 
 # --- 4. Звернення з форми зворотного зв'язку (ContactMessage) ---
@@ -850,6 +1112,7 @@ class ContactMessageAdmin(admin.ModelAdmin):
 # --- 5. Працівники (Person) ---
 @admin.register(Person)
 class PersonAdmin(SimpleHistoryAdmin):
+    form = PersonAdminForm
     list_display = (
         "position",
         "full_name_display",
@@ -882,6 +1145,27 @@ class PersonAdmin(SimpleHistoryAdmin):
             '<span class="oberih-consent-no" title="Без згоди — приховано на сайті">✘ Немає згоди</span>'
         )
 
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        page_published = bool(obj.page and obj.page.is_published)
+        if obj.consent_given:
+            if page_published:
+                msg = (
+                    f"Картку «{obj.full_name}» збережено зі згодою — "
+                    f"вона вже відображається на сторінці «{obj.page.title}»."
+                )
+            else:
+                msg = (
+                    f"Картку «{obj.full_name}» збережено зі згодою, але сторінка «{obj.page.title}» "
+                    "зараз у чернетці — картка з’явиться на сайті після публікації сторінки."
+                )
+        else:
+            msg = (
+                f"Картку посади «{obj.position}» збережено без згоди — "
+                "на сайті вона прихована, доки не буде поставлено галочку «Є письмова згода на оприлюднення»."
+            )
+        self.message_user(request, msg, messages.INFO)
+
 
 class DocumentFileStatusFilter(admin.SimpleListFilter):
     """Фільтр документів за наявністю прикріпленого PDF-файлу."""
@@ -908,6 +1192,7 @@ class DocumentFileStatusFilter(admin.SimpleListFilter):
 # --- 6. Документи (Document) ---
 @admin.register(Document)
 class DocumentAdmin(SimpleHistoryAdmin):
+    form = DocumentAdminForm
     list_display = (
         "title",
         "page",
@@ -947,13 +1232,41 @@ class DocumentAdmin(SimpleHistoryAdmin):
                 '<span style="color:#15803d;font-weight:600;">✔ Завантажено</span>'
             )
 
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        page_published = bool(obj.page and obj.page.is_published)
+        if obj.has_file:
+            if page_published:
+                msg = (
+                    f"Документ «{obj.title}» збережено з PDF-файлом — "
+                    f"він уже доступний для перегляду на сторінці «{obj.page.title}»."
+                )
+            else:
+                msg = (
+                    f"Документ «{obj.title}» збережено з PDF-файлом, але сторінка «{obj.page.title}» "
+                    "зараз у чернетці — документ з’явиться на сайті після публікації сторінки."
+                )
+        else:
+            if page_published:
+                msg = (
+                    f"Документ «{obj.title}» збережено без PDF-файлу — на сторінці «{obj.page.title}» "
+                    "він показується з підписом «Документ готується до оприлюднення»."
+                )
+            else:
+                msg = (
+                    f"Документ «{obj.title}» збережено без PDF-файлу; сторінка «{obj.page.title}» "
+                    "зараз у чернетці — запис з’явиться на сайті після публікації сторінки."
+                )
+        self.message_user(request, msg, messages.INFO)
+
 
 # --- 7. Головна сторінка (HomePage) ---
 @admin.register(HomePage)
 class HomePageAdmin(SingletonModelAdmin):
+    form = HomePageAdminForm
     fieldsets = (
         (
-            "1. Перший екран (Героїчний блок)",
+            "1. Верхній блок сторінки (Перший екран)",
             {
                 "fields": (
                     "hero_eyebrow",
@@ -1022,6 +1335,7 @@ class HomePageAdmin(SingletonModelAdmin):
 # --- 8. Налаштування сайту (SiteSettings) ---
 @admin.register(SiteSettings)
 class SiteSettingsAdmin(SingletonModelAdmin):
+    form = SiteSettingsAdminForm
     fieldsets = (
         (
             "Контакти та реквізити закладу (відображаються на всіх сторінках)",
@@ -1044,6 +1358,7 @@ class SiteSettingsAdmin(SingletonModelAdmin):
 # --- 9. Спонсори (Sponsor) ---
 @admin.register(Sponsor)
 class SponsorAdmin(SimpleHistoryAdmin):
+    form = SponsorAdminForm
     list_display = ("name", "logo_status", "url", "order")
     list_editable = ("order",)
     search_fields = ("name", "url")

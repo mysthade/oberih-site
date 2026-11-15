@@ -2191,6 +2191,240 @@ class Stage11DocumentsPrivacyAndPlaceholdersTests(TestCase):
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", none_html)
 
 
+@override_settings(STORAGES=TEST_STORAGES)
+class AdminEditorUxTests(TestCase):
+    """Тести зрозумілості керування сайтом для редакторів (підказки, підписи, інлайни, згортання, повідомлення, пам’ятка)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("createcachetable", stdout=StringIO())
+        call_command("import_site_map", stdout=StringIO())
+        call_command("import_home", stdout=StringIO())
+        cls.superuser = User.objects.create_superuser(
+            username="ux_editor",
+            email="ux_editor@example.com",
+            password="UxEditorPass123!",
+        )
+
+    def setUp(self):
+        cache.clear()
+        self.client.force_login(self.superuser)
+
+    def test_all_registered_admin_add_and_change_views_return_200(self):
+        """Усі зареєстровані сторінки керування сайтом (список, додавання де дозволено, редагування) відкриваються зі статусом 200."""
+        section = Section.objects.first()
+        page = Page.objects.first()
+        ContactMessage.objects.get_or_create(
+            name="Тест Звернення",
+            email="msg@example.com",
+            defaults={"message": "Тестове повідомлення", "consent_given": True},
+        )
+        Sponsor.objects.get_or_create(name="Тестовий спонсор", defaults={"order": 1})
+        Person.objects.get_or_create(
+            page=page,
+            position="Тестова посада",
+            defaults={"full_name": "Тестенко Тест", "consent_given": True, "order": 1},
+        )
+        Document.objects.get_or_create(page=page, title="Тестовий документ", defaults={"order": 1})
+        NewsItem.objects.get_or_create(
+            slug="test-admin-ux-news",
+            defaults={
+                "title": "Тестова новина",
+                "summary": "Короткий опис",
+                "body": "Текст",
+                "published_date": date(2026, 1, 10),
+            },
+        )
+        HomePage.objects.get_or_create(pk=1)
+        SiteSettings.objects.get_or_create(pk=1)
+
+        rf = RequestFactory()
+        req = rf.get("/")
+        req.user = self.superuser
+
+        for model, model_admin in admin.site._registry.items():
+            if model._meta.app_label != "core":
+                continue
+            app_label = model._meta.app_label
+            model_name = model._meta.model_name
+            with self.subTest(model=model_name):
+                changelist_url = reverse(f"admin:{app_label}_{model_name}_changelist")
+                self.assertEqual(
+                    self.client.get(changelist_url, follow=True).status_code, 200
+                )
+
+                if model_admin.has_add_permission(req):
+                    add_url = reverse(f"admin:{app_label}_{model_name}_add")
+                    self.assertEqual(self.client.get(add_url).status_code, 200)
+
+                obj = model.objects.first()
+                self.assertIsNotNone(obj)
+                change_url = reverse(
+                    f"admin:{app_label}_{model_name}_change", args=[obj.pk]
+                )
+                self.assertEqual(self.client.get(change_url).status_code, 200)
+
+    def test_admin_ux_hints_labels_inlines_and_collapsed_fieldsets(self):
+        """Форми керування сайтом містять зрозумілі підписи, підказки, збережені назви інлайнів та згорнуті другорядні блоки."""
+        page = Page.objects.get(section__slug="ofitsiina-storinka", slug="statut")
+        resp_page = self.client.get(reverse("admin:core_page_change", args=[page.pk]))
+        self.assertEqual(resp_page.status_code, 200)
+        page_html = resp_page.content.decode("utf-8")
+        self.assertIn("Коротка адреса сторінки (латиницею)", page_html)
+        self.assertIn("Короткий опис під заголовком", page_html)
+        self.assertIn("1. Текстові блоки, списки та таблиці сторінки", page_html)
+        self.assertIn("2. Офіційні документи (PDF) на цій сторінці", page_html)
+        self.assertIn("Додатково (адреса та порядок)", page_html)
+
+        news = NewsItem.objects.first()
+        resp_news = self.client.get(reverse("admin:core_newsitem_change", args=[news.pk]))
+        self.assertEqual(resp_news.status_code, 200)
+        news_html = resp_news.content.decode("utf-8")
+        self.assertIn("Коротка адреса новини (латиницею)", news_html)
+        self.assertIn("Колір смужки на картці", news_html)
+        self.assertIn("Додатково (адреса та колір картки)", news_html)
+
+        home, _ = HomePage.objects.get_or_create(pk=1)
+        resp_home = self.client.get(reverse("admin:core_homepage_change", args=[home.pk]))
+        self.assertEqual(resp_home.status_code, 200)
+        home_html = resp_home.content.decode("utf-8")
+        self.assertIn("1. Верхній блок сторінки (Перший екран)", home_html)
+        self.assertIn("Малий підпис над заголовком", home_html)
+
+    def test_admin_post_save_messages_respect_published_and_draft_state(self):
+        """Після збереження Page, NewsItem, Document і Person повідомлення точно відображають статус публікації сторінки."""
+        section = Section.objects.get(slug="pro-nas")
+        pub_page = Page.objects.create(
+            section=section,
+            slug="ux-pub-page",
+            title="Опублікована тестова сторінка",
+            is_published=True,
+            order=90,
+        )
+        draft_page = Page.objects.create(
+            section=section,
+            slug="ux-draft-page",
+            title="Чернетка тестова сторінка",
+            is_published=False,
+            order=91,
+        )
+
+        # Document на опублікованій сторінці vs на чернетці
+        doc_pub = Document.objects.create(page=pub_page, title="Док на опублікованій", order=1)
+        resp_doc_pub = self.client.post(
+            reverse("admin:core_document_change", args=[doc_pub.pk]),
+            data={
+                "page": str(pub_page.pk),
+                "title": doc_pub.title,
+                "order": "1",
+                "_save": "Зберегти",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp_doc_pub.status_code, 200)
+        self.assertIn("Документ готується до оприлюднення", resp_doc_pub.content.decode("utf-8"))
+
+        doc_draft = Document.objects.create(page=draft_page, title="Док на чернетці", order=1)
+        resp_doc_draft = self.client.post(
+            reverse("admin:core_document_change", args=[doc_draft.pk]),
+            data={
+                "page": str(draft_page.pk),
+                "title": doc_draft.title,
+                "order": "1",
+                "_save": "Зберегти",
+            },
+            follow=True,
+        )
+        self.assertEqual(resp_doc_draft.status_code, 200)
+        doc_draft_html = resp_doc_draft.content.decode("utf-8")
+        self.assertIn("після публікації сторінки", doc_draft_html)
+        self.assertNotIn("вже доступний для перегляду", doc_draft_html)
+
+        # Person зі згодою на опублікованій сторінці vs на чернетці vs без згоди
+        person_pub = Person.objects.create(
+            page=pub_page,
+            position="Психолог",
+            full_name="Іваненко Іван",
+            consent_given=True,
+            order=1,
+        )
+        resp_person_pub = self.client.post(
+            reverse("admin:core_person_change", args=[person_pub.pk]),
+            data={
+                "page": str(pub_page.pk),
+                "position": "Психолог",
+                "full_name": "Іваненко Іван",
+                "consent_given": "on",
+                "order": "1",
+                "_save": "Зберегти",
+            },
+            follow=True,
+        )
+        self.assertIn("вже відображається на сторінці", resp_person_pub.content.decode("utf-8"))
+
+        person_draft = Person.objects.create(
+            page=draft_page,
+            position="Логопед",
+            full_name="Петренко Петро",
+            consent_given=True,
+            order=1,
+        )
+        resp_person_draft = self.client.post(
+            reverse("admin:core_person_change", args=[person_draft.pk]),
+            data={
+                "page": str(draft_page.pk),
+                "position": "Логопед",
+                "full_name": "Петренко Петро",
+                "consent_given": "on",
+                "order": "1",
+                "_save": "Зберегти",
+            },
+            follow=True,
+        )
+        person_draft_html = resp_person_draft.content.decode("utf-8")
+        self.assertIn("після публікації сторінки", person_draft_html)
+        self.assertNotIn("вже відображається на сторінці", person_draft_html)
+
+    def test_protected_pages_warning_on_home_and_footer_pages_only(self):
+        """Попередження про захист адреси та публікації показується для сторінок з головної і футера, але не для звичайних сторінок."""
+        warning_text = "Увага: не знімайте публікацію й не змінюйте адресу цієї сторінки"
+
+        home_linked = Page.objects.get(section__slug="ofitsiina-storinka", slug="statut")
+        resp_home_linked = self.client.get(
+            reverse("admin:core_page_change", args=[home_linked.pk])
+        )
+        self.assertIn(warning_text, resp_home_linked.content.decode("utf-8"))
+
+        footer_linked = Page.objects.get(section__slug="pro-nas", slug="misiya-i-viziya")
+        resp_footer_linked = self.client.get(
+            reverse("admin:core_page_change", args=[footer_linked.pk])
+        )
+        self.assertIn(warning_text, resp_footer_linked.content.decode("utf-8"))
+
+        unprotected = Page.objects.create(
+            section=home_linked.section,
+            slug="ux-unprotected-page",
+            title="Звичайна сторінка",
+            is_published=True,
+            order=95,
+        )
+        resp_unprotected = self.client.get(
+            reverse("admin:core_page_change", args=[unprotected.pk])
+        )
+        self.assertNotIn(warning_text, resp_unprotected.content.decode("utf-8"))
+
+    def test_admin_index_contains_collapsible_editor_guide(self):
+        """На головній сторінці керування сайтом є згорнута пам’ятка з коректним описом кнопки «Історія»."""
+        resp = self.client.get(reverse("admin:index"))
+        self.assertEqual(resp.status_code, 200)
+        html = resp.content.decode("utf-8")
+        self.assertIn('<details class="oberih-admin-guide">', html)
+        self.assertIn("Як користуватися керуванням сайтом", html)
+        self.assertIn("Історія", html)
+        self.assertIn("окрім звернень відвідувачів", html)
+
+
+
 
 
 

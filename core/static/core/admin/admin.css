@@ -88,4 +88,32 @@
     padding: 12px 14px;
 }
 
+.oberih-admin-guide {
+    margin: 0 0 18px;
+    padding: 10px 14px;
+    background: var(--darkened-bg, #f8fafc);
+    border: 1px solid var(--hairline-color, #d1d5db);
+    border-radius: 4px;
+}
+
+.oberih-admin-guide__summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--body-fg, #1f2937);
+}
+
+.oberih-admin-guide__body {
+    margin-top: 10px;
+}
+
+.oberih-admin-guide__body ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.oberih-admin-guide__body li {
+    margin-bottom: 6px;
+    line-height: 1.45;
+}
+
 
