@@ -608,6 +608,13 @@ html.preload-out body::after{animation:pl-spin 1.4s linear infinite,pl-out-logo 
 /* Додано для Django: відступ під формою, коли немає плашки графіка */
 .page-contacts .contact:last-child{padding-bottom:4.5rem}
 
+/* Додано для Django: уся картка новини клікабельна */
+.news-card{position:relative;cursor:pointer}
+.news-body :is(h2,h3) a::after{content:"";position:absolute;inset:0;z-index:1}
+.news-card:hover .news-body :is(h2,h3) a{text-decoration:underline}
+.news-card:has(:is(h2,h3) a:focus-visible){outline:3px solid var(--focus);outline-offset:2px}
+.news-card:has(:is(h2,h3) a:focus-visible) .news-body :is(h2,h3) a:focus-visible{outline:none}
+
 /* Додано для Django: підвал притиснутий до низу на коротких сторінках */
 body{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
 .site-footer{margin-top:auto}
