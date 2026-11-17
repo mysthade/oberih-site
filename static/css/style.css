@@ -303,6 +303,14 @@ section.block{padding-block:4.5rem 0}
 .welcome .btn-ghost{color:var(--paper-ink);border-color:var(--paper-line)}
 .welcome .btn-ghost:hover{border-color:var(--paper-ink)}
 .welcome-art{display:block;width:100%;max-width:960px;height:auto}
+.welcome-media{width:100%;max-width:960px}
+:root[data-scheme="dark"]:not([data-contrast="high"]) .welcome{background:linear-gradient(180deg,var(--tint) 0%,var(--surface) 100%);color:var(--ink);border-color:rgba(245,190,85,.28);border-color:color-mix(in srgb,var(--accent) 28%,transparent)}
+:root[data-scheme="dark"]:not([data-contrast="high"]) .welcome .eyebrow.c-orange{color:var(--orange-ink)}
+:root[data-scheme="dark"]:not([data-contrast="high"]) .welcome p{color:var(--muted)}
+:root[data-scheme="dark"]:not([data-contrast="high"]) .welcome .btn-ghost{color:var(--ink);border-color:rgba(233,237,247,.35);border-color:color-mix(in srgb,var(--ink) 35%,transparent)}
+:root[data-scheme="dark"]:not([data-contrast="high"]) .welcome .btn-ghost:hover{border-color:var(--ink)}
+:root[data-scheme="dark"]:not([data-contrast="high"]) .welcome-media{background:radial-gradient(ellipse closest-side at 50% 55%,rgba(255,255,255,.94) 0%,rgba(255,255,255,.86) 40%,rgba(255,255,255,.58) 62%,rgba(255,255,255,.24) 80%,rgba(255,255,255,.06) 92%,rgba(255,255,255,0) 100%)}
+:root[data-scheme="dark"]:not([data-contrast="high"]) .welcome-art{filter:drop-shadow(0 0 1.5px rgba(255,255,255,.8))}
 
 /* Спонсори: логотипи на білих картках (однаково в обох темах) */
 .sponsors{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:1rem}

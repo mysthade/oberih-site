@@ -189,7 +189,9 @@
             <a class="btn btn-ghost" href="#contacts">Поставити запитання</a>
           </div>
         </div>
-        <img class="welcome-art" src="{% if home_page.welcome_image %}{{ home_page.welcome_image.url }}{% else %}{% static 'img/kids.jpg' %}{% endif %}" alt="" width="1400" height="499" loading="lazy">
+        <div class="welcome-media">
+          <img class="welcome-art" src="{% if home_page.welcome_image %}{{ home_page.welcome_image.url }}{% else %}{% static 'img/kids.png' %}{% endif %}" alt="" width="2100" height="749" loading="lazy">
+        </div>
       </div>
     </div>
   </section>
