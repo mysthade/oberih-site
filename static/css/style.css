@@ -175,6 +175,9 @@ a[href^="tel:"]{white-space:nowrap}
 .menu > li.is-active > a::after,.menu > li.is-active > button::after{transform:scaleX(1)}
 .main-nav.nav-tight .menu > li > a,.main-nav.nav-tight .menu > li > button{padding-left:.42rem;padding-right:.42rem;font-size:.86rem;gap:.15rem}
 .main-nav.nav-tight .chev{width:.85rem;height:.85rem}
+.menu > li.menu-home > a{min-width:44px;min-height:44px;justify-content:center}
+.menu > li.menu-home .icon{width:1.25rem;height:1.25rem}
+.menu > li.menu-home .menu-home-lbl{display:none}
 button[aria-expanded="true"] .chev{transform:rotate(180deg)}
 .submenu{list-style:none;margin:0;padding:.5rem;position:absolute;left:0;top:100%;min-width:290px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:0 0 12px 12px;box-shadow:0 18px 40px -18px rgba(15,22,48,.45);z-index:30;display:block;opacity:0;visibility:hidden;transform:translateY(10px);pointer-events:none;transition:opacity .2s ease,transform .28s var(--ease),visibility 0s linear .28s}
 .submenu a{display:block;padding:.55rem .75rem;border-radius:8px;color:var(--ink);text-decoration:none;font-size:max(.95rem,var(--min-text));line-height:1.35;transition:background-color .15s,box-shadow .15s}
@@ -484,6 +487,8 @@ html.preload-out body::after{animation:pl-spin 1.4s linear infinite,pl-out-logo 
   .menu > li > button[aria-expanded="true"]{background:transparent;color:var(--accent)}
   .menu .ln{display:inline}
   .menu > li.is-active > a,.menu > li.is-active > button{color:var(--accent)}
+  .menu > li.menu-home > a{justify-content:flex-start;gap:.6rem}
+  .menu > li.menu-home .menu-home-lbl{display:inline}
   .submenu a[aria-current="page"]{font-weight:800;background:color-mix(in srgb,var(--on-brand) 14%,transparent)}
   /* підменю-акордеон: висоту анімує скрипт */
   .submenu,button[aria-expanded="true"] + .submenu{position:static;min-width:0;opacity:1;transform:none;pointer-events:auto;box-shadow:none;border:0;border-radius:12px;padding:0 .25rem;margin:0;

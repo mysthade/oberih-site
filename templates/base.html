@@ -84,6 +84,7 @@
     </div>
     <ul class="menu" id="menu">
       <!-- build:menu -->
+{% url 'core:home' as home_url %}      <li class="menu-home{% if request.path == home_url %} is-active{% endif %}"><a href="{{ home_url }}" aria-label="На головну" title="На головну"{% if request.path == home_url %} aria-current="page"{% endif %}><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5L12 3l9 7.5V20a1 1 0 0 1-1 1h-5.5v-6h-5v6H4a1 1 0 0 1-1-1z"/></svg><span class="lbl menu-home-lbl">Головна</span></a></li>
 {% for sec in menu_sections %}      <li{% if current_section_slug == sec.slug %} class="is-active"{% endif %}>
         <button type="button" aria-expanded="false"><span class="lbl">{% if sec.menu_lines %}<span class="ln">{{ sec.menu_lines.0 }}</span> <span class="ln">{{ sec.menu_lines.1 }}</span>{% else %}{{ sec.title }}{% endif %}</span> <svg class="icon chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
         <ul class="submenu">
